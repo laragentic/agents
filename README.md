@@ -56,6 +56,7 @@ Laragentic adds that missing piece:
 | **ReAct Loop**               | Think → call tools → observe results → repeat until done             |
 | **Plan-Execute Loop**        | Create a plan → execute each step → synthesize a final answer        |
 | **Chain-of-Thought Loop**    | Reason iteratively → evaluate understanding → continue until confident|
+| **Agent Skills System**      | Dynamic skill loading with progressive disclosure and auto-discovery  |
 | **Lifecycle Callbacks**      | Hook into every phase to stream progress, log, or broadcast          |
 | **Configurable Limits**      | Set max iterations/steps to control cost and prevent runaway loops   |
 | **Adaptive Replanning**      | The Plan-Execute loop revises its plan mid-execution if a step fails |
@@ -824,6 +825,312 @@ class MyAgent implements Agent, HasTools
     protected function formatObservation(array $toolCallRecords): string { /* ... */ }
 }
 ```
+
+---
+
+## Agent Skills System
+
+The Agent Skills System brings dynamic, context-aware instruction loading to your agents. Following the [agentskills.io](https://agentskills.io) specification, this system enables progressive disclosure — loading specialized knowledge only when needed, minimizing context usage while maximizing agent effectiveness.
+
+### What are Agent Skills?
+
+An Agent Skill is a self-contained package of specialized instructions and resources that teaches an agent how to perform a specific task exceptionally well. Think of skills as expert domain knowledge that can be loaded on-demand.
+
+**Key Benefits:**
+
+- ✅ **Progressive Disclosure** — Load only what you need, when you need it
+- ✅ **Modular Knowledge** — Organize specialized instructions into reusable skills
+- ✅ **Auto-Discovery** — Agents automatically find relevant skills for tasks
+- ✅ **Context Efficiency** — Reduce token usage with targeted skill loading
+- ✅ **Easy Sharing** — Share skills across teams and projects
+
+### Quick Start
+
+#### 1. Add the Trait
+
+```php
+use Laragentic\Skills\HasAgentSkills;
+
+class MyAgent implements Agent, HasTools
+{
+    use Promptable, ReActLoop, HasAgentSkills;
+
+    protected function baseInstructions(): string
+    {
+        return 'You are a helpful assistant.';
+    }
+
+    public function instructions(?string $query = null): string
+    {
+        return $this->enhanceInstructionsWithSkills(
+            $this->baseInstructions(),
+            $query ?? ''
+        );
+    }
+}
+```
+
+#### 2. Load Skills
+
+**Manual Loading:**
+```php
+$agent = new MyAgent;
+$agent->withSkill('code-review');
+$result = $agent->reactLoop('Review this PHP code for security issues');
+```
+
+**Auto-Resolution:**
+```php
+$agent = new MyAgent;
+$agent->autoResolveSkills(threshold: 0.3, limit: 3);
+$result = $agent->reactLoop('Analyze this code for vulnerabilities');
+// Automatically loads 'code-review' skill based on query relevance
+```
+
+### Example Skills
+
+Laragentic includes three production-ready skills in the `examples/skills/` directory:
+
+#### code-review
+Comprehensive code review for security, performance, and best practices.
+- OWASP Top 10 security analysis
+- Performance bottleneck detection
+- SOLID principles enforcement
+- Language-specific guidance (PHP, JavaScript, Python)
+
+#### data-analysis
+Expert data analysis, statistical modeling, and insight generation.
+- Exploratory data analysis (EDA)
+- Statistical testing and hypothesis validation
+- Visualization recommendations
+- Actionable business insights
+
+#### api-testing
+API endpoint testing, validation, and test suite generation.
+- HTTP method testing (GET, POST, PUT, DELETE, etc.)
+- JSON schema validation
+- Security testing (SQL injection, XSS, auth issues)
+- Performance analysis and error handling assessment
+
+### Creating Custom Skills
+
+Skills are stored in `app/Skills/` (configurable) with this structure:
+
+```
+app/Skills/
+  my-skill/
+    SKILL.md          # Required: metadata + instructions
+    scripts/          # Optional: executable scripts
+    references/       # Optional: reference documents
+    assets/           # Optional: images, diagrams
+```
+
+**SKILL.md Format:**
+
+```markdown
+---
+name: my-skill
+description: Brief description of what this skill does
+tags: [relevant, tags, here]
+version: 1.0.0
+author: Your Name
+---
+
+# My Skill Title
+
+You are an expert in [domain]. Your task is to [specific task].
+
+## Guidelines
+
+1. [Guideline 1]
+2. [Guideline 2]
+
+## Output Format
+
+Provide your response in this structure:
+- [Section 1]
+- [Section 2]
+
+## Best Practices
+
+- [Practice 1]
+- [Practice 2]
+```
+
+**Example:**
+
+```bash
+mkdir -p app/Skills/security-audit
+```
+
+Create `app/Skills/security-audit/SKILL.md`:
+
+```markdown
+---
+name: security-audit
+description: Perform comprehensive security audits on applications
+tags: [security, audit, vulnerability, penetration-testing]
+version: 1.0.0
+---
+
+# Security Audit Skill
+
+You are a cybersecurity expert conducting thorough security audits...
+
+[Detailed instructions here]
+```
+
+Then use it:
+
+```php
+$result = (new MyAgent)
+    ->withSkill('security-audit')
+    ->reactLoop('Audit this application for security vulnerabilities');
+```
+
+### Auto-Resolution
+
+Let agents automatically discover and load relevant skills based on query content:
+
+```php
+$agent = (new MyAgent)->autoResolveSkills(
+    threshold: 0.3,  // Minimum relevance score (0.0 - 1.0)
+    limit: 3         // Maximum skills to load
+);
+
+// Query mentions "security" → auto-loads code-review skill
+$result = $agent->reactLoop('Review this code for security issues');
+
+// Query mentions "data analysis" → auto-loads data-analysis skill
+$result = $agent->reactLoop('Analyze this dataset for trends');
+```
+
+**How Relevance Scoring Works:**
+
+The resolver calculates a relevance score (0.0 - 1.0) for each skill:
+- **Exact name match** in query: +1.0
+- **Partial name match**: +0.5
+- **Description keyword match**: +0.7 per keyword
+- **Tag match**: +0.5 per tag
+
+Skills above the threshold are loaded automatically.
+
+### Integration with Loops
+
+Skills work seamlessly with all Laragentic loops:
+
+```php
+// ReAct Loop with Skills
+$result = (new MyAgent)
+    ->withSkill('code-review')
+    ->reactLoop('Review this code for security issues');
+
+// Plan-Execute Loop with Skills
+$result = (new MyAgent)
+    ->withSkill('data-analysis')
+    ->planExecute('Analyze Q4 sales data and generate insights');
+
+// Chain-of-Thought Loop with Skills
+$result = (new MyAgent)
+    ->withSkill('api-testing')
+    ->chainOfThought('How should we test this REST API?');
+```
+
+### Callbacks
+
+Track skill loading and resolution with callbacks:
+
+```php
+$agent = (new MyAgent)
+    ->autoResolveSkills()
+    ->onSkillLoaded(function ($skill) {
+        Log::info('Skill loaded', ['skill' => $skill->name()]);
+    })
+    ->onSkillResolved(function ($skills, $query) {
+        Log::info('Skills resolved', [
+            'count' => count($skills),
+            'names' => array_map(fn($s) => $s->name(), $skills),
+            'query' => $query,
+        ]);
+    });
+```
+
+### Configuration
+
+Configure the Skills system in `config/agentic.php`:
+
+```php
+'skills' => [
+    'enabled' => true,
+    'path' => app_path('Skills'),
+    'auto_resolve' => false,
+    'resolution_threshold' => 0.3,
+    'resolution_limit' => 3,
+],
+```
+
+Environment variables:
+
+```env
+AGENTIC_SKILLS_ENABLED=true
+AGENTIC_SKILLS_PATH=/path/to/skills
+AGENTIC_SKILLS_AUTO_RESOLVE=false
+AGENTIC_SKILLS_THRESHOLD=0.3
+AGENTIC_SKILLS_LIMIT=3
+```
+
+### Progressive Disclosure
+
+The Skills System minimizes context usage through three levels:
+
+**Level 1: Skill Index** (No skills loaded)
+```
+Available Skills:
+- code-review: Analyze code for security and performance
+- data-analysis: Analyze datasets and generate insights
+- api-testing: Test API endpoints and validate responses
+```
+Token usage: **Minimal** (just metadata)
+
+**Level 2: Full Instructions** (Skills loaded)
+```
+# Active Skills
+
+## Skill: code-review
+
+You are an expert code reviewer...
+[Full detailed instructions]
+```
+Token usage: **As needed** (only loaded skills)
+
+**Level 3: Resources** (On demand)
+Scripts and references loaded only when explicitly requested.
+
+### Streaming with Skills
+
+Skills work seamlessly with streaming responses:
+
+```php
+$agent = (new MyAgent)
+    ->autoResolveSkills()
+    ->onSkillLoaded(function ($skill) {
+        yield new StreamedEvent('skill-loaded', [
+            'skill' => $skill->name()
+        ]);
+    });
+
+return response()->eventStream(function () use ($agent) {
+    yield from $agent->reactLoopStream(request('query'));
+});
+```
+
+### Documentation
+
+- **[Complete Tutorial](tutorial/agent-skills-system.md)** — Comprehensive guide with examples and diagrams
+- **[Skills README](SKILLS_README.md)** — System overview and quick reference
+- **[Example Skills](examples/skills/)** — Three production-ready skills
+
+**Learn more:** See the [complete Skills tutorial](tutorial/agent-skills-system.md) for advanced patterns, troubleshooting, and detailed examples.
 
 ---
 
