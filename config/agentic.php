@@ -244,4 +244,128 @@ return [
 
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | MCP Client Configuration
+    |--------------------------------------------------------------------------
+    |
+    | These options control the Model Context Protocol (MCP) client which
+    | enables agents to connect to MCP servers and consume their tools,
+    | resources, and prompts. Supports both stdio and Streamable HTTP
+    | transports targeting the 2025-11-25 protocol revision.
+    |
+    */
+
+    'mcp' => [
+
+        /*
+        |--------------------------------------------------------------------------
+        | Enable MCP Client
+        |--------------------------------------------------------------------------
+        |
+        | When true, agents can use the HasMcpClients trait to connect to
+        | MCP servers. When false, MCP-related methods are disabled.
+        |
+        */
+
+        'enabled' => (bool) env('AGENTIC_MCP_ENABLED', true),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Default Client Capabilities
+        |--------------------------------------------------------------------------
+        |
+        | Controls which capabilities the client declares during initialization.
+        | These tell the server what the client supports.
+        |
+        */
+
+        'capabilities' => [
+            'roots' => true,
+            'sampling' => true,
+            'sampling_tools' => true,
+            'elicitation_form' => true,
+            'elicitation_url' => true,
+        ],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Client Info
+        |--------------------------------------------------------------------------
+        |
+        | Identification sent to MCP servers during initialization.
+        |
+        */
+
+        'client_info' => [
+            'name' => 'laragentic',
+            'version' => '1.0.0',
+        ],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Transport Defaults
+        |--------------------------------------------------------------------------
+        |
+        | Default settings for each transport type.
+        |
+        */
+
+        'transports' => [
+            'stdio' => [
+                'shutdown_timeout' => 5,      // seconds before SIGTERM
+                'sigterm_timeout' => 3,        // seconds before SIGKILL
+            ],
+            'http' => [
+                'timeout' => 30,              // request timeout in seconds
+                'sse_reconnect_delay' => 1000, // milliseconds
+            ],
+        ],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Protocol Settings
+        |--------------------------------------------------------------------------
+        |
+        | Settings for the MCP protocol layer.
+        |
+        */
+
+        'protocol' => [
+            'version' => '2025-11-25',
+            'request_timeout' => 30,          // seconds
+        ],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Sampling Settings
+        |--------------------------------------------------------------------------
+        |
+        | Controls how the client handles sampling/createMessage requests
+        | from MCP servers.
+        |
+        */
+
+        'sampling' => [
+            'auto_approve' => (bool) env('AGENTIC_MCP_SAMPLING_AUTO_APPROVE', false),
+            'max_iterations' => 10,            // tool loop limit
+            'rate_limit' => 60,                // requests per minute
+        ],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Logging
+        |--------------------------------------------------------------------------
+        |
+        | Controls how MCP server log messages are forwarded.
+        |
+        */
+
+        'logging' => [
+            'channel' => env('AGENTIC_MCP_LOG_CHANNEL', 'stack'),
+            'default_level' => 'info',
+        ],
+
+    ],
+
 ];
