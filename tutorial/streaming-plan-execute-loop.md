@@ -4,7 +4,7 @@ Deep dive into the Plan-Execute pattern for multi-step tasks with real-time stre
 
 ![Plan-Execute Loop in Action](images/plan-execute-loop.png)
 
-*Watch the agent create a plan, execute each step sequentially, and synthesize a comprehensive final answer.*
+_Watch the agent create a plan, execute each step sequentially, and synthesize a comprehensive final answer._
 
 ## What is Plan-Execute?
 
@@ -22,7 +22,7 @@ graph TD
     Check -->|Yes| Synthesize[Synthesize Results]
     Synthesize --> Answer[Final Answer]
     Answer --> End[Complete]
-    
+
     Step1 -.->|Failed| Replan[Replan]
     Step2 -.->|Failed| Replan
     StepN -.->|Failed| Replan
@@ -46,14 +46,14 @@ This pattern is ideal for:
 
 ## When to Use Plan-Execute vs ReAct
 
-| Scenario | Best Pattern | Why |
-|----------|-------------|-----|
-| "What's the weather in Tokyo?" | **ReAct** | Simple, single-tool query |
-| "Compare weather in 3 cities" | **Plan-Execute** | Structured, multi-step task |
-| "Find the warmest city" | **ReAct** | Requires dynamic exploration |
-| "Create a weather comparison report" | **Plan-Execute** | Formal output, clear steps |
-| "Search for X and calculate Y" | **ReAct** | Dynamic, exploratory |
-| "Research topic A, B, C then summarize" | **Plan-Execute** | Sequential research steps |
+| Scenario                                | Best Pattern     | Why                          |
+| --------------------------------------- | ---------------- | ---------------------------- |
+| "What's the weather in Tokyo?"          | **ReAct**        | Simple, single-tool query    |
+| "Compare weather in 3 cities"           | **Plan-Execute** | Structured, multi-step task  |
+| "Find the warmest city"                 | **ReAct**        | Requires dynamic exploration |
+| "Create a weather comparison report"    | **Plan-Execute** | Formal output, clear steps   |
+| "Search for X and calculate Y"          | **ReAct**        | Dynamic, exploratory         |
+| "Research topic A, B, C then summarize" | **Plan-Execute** | Sequential research steps    |
 
 **Rule of thumb:** If you know the steps upfront → Plan-Execute. If steps depend on discoveries → ReAct.
 
@@ -82,17 +82,17 @@ class PlanningAgent implements Agent, HasTools
     {
         return <<<'INSTRUCTIONS'
         You are a planning agent that breaks complex tasks into steps.
-        
+
         Your workflow:
         1. PLAN: Break the task into 3-6 clear, sequential steps
         2. EXECUTE: Complete each step using available tools
         3. SYNTHESIZE: Combine all results into a comprehensive answer
-        
+
         Available tools:
         - get_weather: For weather information
         - search: For research and knowledge gathering
         - calculate: For mathematical operations
-        
+
         Create detailed plans. Execute each step thoroughly.
         INSTRUCTIONS;
     }
@@ -115,9 +115,9 @@ use App\Agents\PlanningAgent;
 
 Route::get('/plan', function () {
     $agent = new PlanningAgent;
-    
+
     $result = $agent->planExecute('Compare the weather in Tokyo, London, and Paris');
-    
+
     return response()->json([
         'answer' => $result->text,
         'plan' => $result->plan,
@@ -153,39 +153,39 @@ sequenceDiagram
 
     Client->>Server: GET /stream?task=...
     Server->>Agent: planExecuteStream(task)
-    
+
     Agent->>Server: onLoopStart
     Server-->>Client: SSE: start
-    
+
     Agent->>Agent: Create Plan (LLM call)
     Agent->>Server: onPlanCreated
     Server-->>Client: SSE: plan
-    
+
     loop Each Step
         Agent->>Server: onBeforeStep
         Server-->>Client: SSE: step (start)
-        
+
         Agent->>Tools: Execute step (may use tools)
         Tools-->>Agent: Result
-        
+
         Agent->>Server: onAfterStep
         Server-->>Client: SSE: step (complete)
-        
+
         alt Step Failed
             Agent->>Agent: Create New Plan
             Agent->>Server: onReplan
             Server-->>Client: SSE: replan
         end
     end
-    
+
     Agent->>Server: onBeforeSynthesis
     Server-->>Client: SSE: synthesis (start)
-    
+
     Agent->>Agent: Synthesize (LLM call)
-    
+
     Agent->>Server: onAfterSynthesis
     Server-->>Client: SSE: synthesis (complete)
-    
+
     Agent->>Server: onLoopComplete
     Server-->>Client: SSE: complete
     Server-->>Client: SSE: </stream>
@@ -204,7 +204,7 @@ Route::get('/stream', function () {
         $agent
             ->allowReplan()  // Enable adaptive replanning
             ->maxSteps(8)    // Maximum steps allowed
-            
+
             ->onPlanCreated(function (array $steps) {
                 yield new StreamedEvent(
                     event: 'plan',
@@ -269,124 +269,126 @@ Route::get('/stream', function () {
 ### React Component
 
 ```tsx
-import { useEventStream } from '@laravel/stream-react';
-import { useState, useCallback } from 'react';
+import { useEventStream } from "@laravel/stream-react";
+import { useState, useCallback } from "react";
 
 type Step = {
-    number: number;
-    description: string;
-    status: 'pending' | 'executing' | 'completed';
+  number: number;
+  description: string;
+  status: "pending" | "executing" | "completed";
 };
 
 export default function PlanExecuteDemo() {
-    const [task, setTask] = useState('');
-    const [streamUrl, setStreamUrl] = useState('');
-    const [plan, setPlan] = useState<Step[]>([]);
-    const [synthesis, setSynthesis] = useState<string | null>(null);
-    const [finalResult, setFinalResult] = useState('');
+  const [task, setTask] = useState("");
+  const [streamUrl, setStreamUrl] = useState("");
+  const [plan, setPlan] = useState<Step[]>([]);
+  const [synthesis, setSynthesis] = useState<string | null>(null);
+  const [finalResult, setFinalResult] = useState("");
 
-    const handleEvent = useCallback((event: MessageEvent) => {
-        const data = JSON.parse(event.data);
+  const handleEvent = useCallback((event: MessageEvent) => {
+    const data = JSON.parse(event.data);
 
-        if (event.type === 'plan') {
-            const steps = data.steps.map((desc: string, idx: number) => ({
-                number: idx + 1,
-                description: desc,
-                status: 'pending' as const,
-            }));
-            setPlan(steps);
-        } else if (event.type === 'step') {
-            if (data.stage === 'start') {
-                setPlan(prev => prev.map(step =>
-                    step.number === data.number
-                        ? { ...step, status: 'executing' }
-                        : step
-                ));
-            } else if (data.stage === 'complete') {
-                setPlan(prev => prev.map(step =>
-                    step.number === data.number
-                        ? { ...step, status: 'completed' }
-                        : step
-                ));
-            }
-        } else if (event.type === 'synthesis') {
-            if (data.stage === 'complete') {
-                setSynthesis(data.text);
-            }
-        } else if (event.type === 'complete') {
-            setFinalResult(data.text);
-        }
-    }, []);
+    if (event.type === "plan") {
+      const steps = data.steps.map((desc: string, idx: number) => ({
+        number: idx + 1,
+        description: desc,
+        status: "pending" as const,
+      }));
+      setPlan(steps);
+    } else if (event.type === "step") {
+      if (data.stage === "start") {
+        setPlan((prev) =>
+          prev.map((step) =>
+            step.number === data.number
+              ? { ...step, status: "executing" }
+              : step,
+          ),
+        );
+      } else if (data.stage === "complete") {
+        setPlan((prev) =>
+          prev.map((step) =>
+            step.number === data.number
+              ? { ...step, status: "completed" }
+              : step,
+          ),
+        );
+      }
+    } else if (event.type === "synthesis") {
+      if (data.stage === "complete") {
+        setSynthesis(data.text);
+      }
+    } else if (event.type === "complete") {
+      setFinalResult(data.text);
+    }
+  }, []);
 
-    const handleStart = () => {
-        setPlan([]);
-        setSynthesis(null);
-        setFinalResult('');
-        setStreamUrl(`/stream?task=${encodeURIComponent(task)}`);
-    };
+  const handleStart = () => {
+    setPlan([]);
+    setSynthesis(null);
+    setFinalResult("");
+    setStreamUrl(`/stream?task=${encodeURIComponent(task)}`);
+  };
 
-    return (
-        <div>
-            {streamUrl && (
-                <StreamListener url={streamUrl} onEvent={handleEvent} />
-            )}
+  return (
+    <div>
+      {streamUrl && <StreamListener url={streamUrl} onEvent={handleEvent} />}
 
-            <input
-                value={task}
-                onChange={e => setTask(e.target.value)}
-                placeholder="Describe a multi-step task..."
-            />
-            <button onClick={handleStart}>Start Planning</button>
+      <input
+        value={task}
+        onChange={(e) => setTask(e.target.value)}
+        placeholder="Describe a multi-step task..."
+      />
+      <button onClick={handleStart}>Start Planning</button>
 
-            {/* Plan visualization */}
-            {plan.length > 0 && (
-                <div className="plan">
-                    <h2>Plan ({plan.length} steps)</h2>
-                    {plan.map(step => (
-                        <div key={step.number} className={step.status}>
-                            <span className="number">{step.number}</span>
-                            <span className="description">{step.description}</span>
-                            <span className="status">{step.status}</span>
-                        </div>
-                    ))}
-                </div>
-            )}
-
-            {/* Synthesis */}
-            {synthesis && (
-                <div className="synthesis">
-                    <h2>Synthesis</h2>
-                    <p>{synthesis}</p>
-                </div>
-            )}
-
-            {/* Final result */}
-            {finalResult && (
-                <div className="result">
-                    <h2>Final Result</h2>
-                    <p>{finalResult}</p>
-                </div>
-            )}
+      {/* Plan visualization */}
+      {plan.length > 0 && (
+        <div className="plan">
+          <h2>Plan ({plan.length} steps)</h2>
+          {plan.map((step) => (
+            <div key={step.number} className={step.status}>
+              <span className="number">{step.number}</span>
+              <span className="description">{step.description}</span>
+              <span className="status">{step.status}</span>
+            </div>
+          ))}
         </div>
-    );
+      )}
+
+      {/* Synthesis */}
+      {synthesis && (
+        <div className="synthesis">
+          <h2>Synthesis</h2>
+          <p>{synthesis}</p>
+        </div>
+      )}
+
+      {/* Final result */}
+      {finalResult && (
+        <div className="result">
+          <h2>Final Result</h2>
+          <p>{finalResult}</p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function StreamListener({ url, onEvent }) {
-    // Wrap error handler to filter out @laravel/stream-react bugs
-    const handleError = (error?: any) => {
-        if (error?.message?.includes('startsWith') || error?.type === 'error') {
-            console.log('Stream closed normally');
-        } else {
-            console.error('Stream error:', error);
-        }
-    };
+  // Wrap error handler to filter out @laravel/stream-react bugs
+  const handleError = (error?: any) => {
+    if (error?.message?.includes("startsWith") || error?.type === "error") {
+      console.log("Stream closed normally");
+    } else {
+      console.error("Stream error:", error);
+    }
+  };
 
-    useEventStream(url, {
-        eventName: ['plan', 'step', 'synthesis', 'complete'],
-        onMessage: onEvent,
-        onError: handleError,
-    });
-    return null;
+  useEventStream(url, {
+    eventName: ["plan", "step", "synthesis", "complete"],
+    onMessage: onEvent,
+    onError: handleError,
+  });
+  return null;
 }
 ```
 
@@ -403,7 +405,7 @@ Route::get('/stream-detailed', function () {
             ->allowReplan()
             ->maxSteps(10)
             ->maxReplans(2)
-            
+
             // ─── Loop Start ────────────────────────────────────
             ->onLoopStart(function (string $task) {
                 yield new StreamedEvent(
@@ -411,7 +413,7 @@ Route::get('/stream-detailed', function () {
                     data: ['task' => $task],
                 );
             })
-            
+
             // ─── Planning Phase ────────────────────────────────
             ->onPlanCreated(function (array $steps) {
                 yield new StreamedEvent(
@@ -423,7 +425,7 @@ Route::get('/stream-detailed', function () {
                     ],
                 );
             })
-            
+
             // ─── Step Execution ────────────────────────────────
             ->onBeforeStep(function (int $stepNumber, string $description, int $totalSteps) {
                 yield new StreamedEvent(
@@ -448,7 +450,7 @@ Route::get('/stream-detailed', function () {
                     ],
                 );
             })
-            
+
             // ─── Replanning ────────────────────────────────────
             ->onReplan(function (array $newSteps, int $replanCount) {
                 yield new StreamedEvent(
@@ -460,7 +462,7 @@ Route::get('/stream-detailed', function () {
                     ],
                 );
             })
-            
+
             // ─── Synthesis Phase ───────────────────────────────
             ->onBeforeSynthesis(function (array $stepResults) {
                 yield new StreamedEvent(
@@ -480,7 +482,7 @@ Route::get('/stream-detailed', function () {
                     ],
                 );
             })
-            
+
             // ─── Loop Complete ─────────────────────────────────
             ->onLoopComplete(function ($response, int $totalSteps) {
                 yield new StreamedEvent(
@@ -492,7 +494,7 @@ Route::get('/stream-detailed', function () {
                     ],
                 );
             })
-            
+
             // ─── Error Handling ────────────────────────────────
             ->onMaxStepsReached(function ($response, int $stepsExecuted) {
                 yield new StreamedEvent(
@@ -562,43 +564,51 @@ New Plan (Replan #1):
 ### Frontend Visualization
 
 ```tsx
-const [plans, setPlans] = useState<Array<{ type: 'initial' | 'replan', steps: Step[] }>>([]);
+const [plans, setPlans] = useState<
+  Array<{ type: "initial" | "replan"; steps: Step[] }>
+>([]);
 
 const handleEvent = (event: MessageEvent) => {
-    const data = JSON.parse(event.data);
+  const data = JSON.parse(event.data);
 
-    if (event.type === 'plan') {
-        setPlans(prev => [...prev, {
-            type: data.type === 'initial' ? 'initial' : 'replan',
-            steps: data.steps.map((desc, idx) => ({
-                number: idx + 1,
-                description: desc,
-                status: 'pending',
-            })),
-        }]);
-    } else if (event.type === 'replan') {
-        setPlans(prev => [...prev, {
-            type: 'replan',
-            steps: data.newSteps.map((desc, idx) => ({
-                number: idx + 1,
-                description: desc,
-                status: 'pending',
-            })),
-        }]);
-    }
+  if (event.type === "plan") {
+    setPlans((prev) => [
+      ...prev,
+      {
+        type: data.type === "initial" ? "initial" : "replan",
+        steps: data.steps.map((desc, idx) => ({
+          number: idx + 1,
+          description: desc,
+          status: "pending",
+        })),
+      },
+    ]);
+  } else if (event.type === "replan") {
+    setPlans((prev) => [
+      ...prev,
+      {
+        type: "replan",
+        steps: data.newSteps.map((desc, idx) => ({
+          number: idx + 1,
+          description: desc,
+          status: "pending",
+        })),
+      },
+    ]);
+  }
 };
 
 // Render
-{plans.map((plan, idx) => (
+{
+  plans.map((plan, idx) => (
     <div key={idx}>
-        <h3>
-            {plan.type === 'initial' ? 'Initial Plan' : `Replan #${idx}`}
-        </h3>
-        {plan.steps.map(step => (
-            <div key={step.number}>{step.description}</div>
-        ))}
+      <h3>{plan.type === "initial" ? "Initial Plan" : `Replan #${idx}`}</h3>
+      {plan.steps.map((step) => (
+        <div key={step.number}>{step.description}</div>
+      ))}
     </div>
-))}
+  ));
+}
 ```
 
 ## Advanced Patterns
@@ -833,24 +843,32 @@ $task = 'Analyze React, Vue, and Svelte frameworks and recommend the best for a 
 
 ```tsx
 function StreamListener({ url, onEvent, onComplete, onError }) {
-    const handleError = (error?: any) => {
-        // Filter out the @laravel/stream-react closure bug
-        if (error?.message?.includes('startsWith') || error?.type === 'error') {
-            console.log('Stream closed (EventSource error - normal closure)');
-            onComplete(); // Treat as successful completion
-        } else {
-            console.error('Stream error:', error);
-            onError(); // Real error
-        }
-    };
+  const handleError = (error?: any) => {
+    // Filter out the @laravel/stream-react closure bug
+    if (error?.message?.includes("startsWith") || error?.type === "error") {
+      console.log("Stream closed (EventSource error - normal closure)");
+      onComplete(); // Treat as successful completion
+    } else {
+      console.error("Stream error:", error);
+      onError(); // Real error
+    }
+  };
 
-    useEventStream(url, {
-        eventName: ['start', 'plan', 'step', 'replan', 'synthesis', 'complete', 'error'],
-        onMessage: onEvent,
-        onComplete,
-        onError: handleError,
-    });
-    return null;
+  useEventStream(url, {
+    eventName: [
+      "start",
+      "plan",
+      "step",
+      "replan",
+      "synthesis",
+      "complete",
+      "error",
+    ],
+    onMessage: onEvent,
+    onComplete,
+    onError: handleError,
+  });
+  return null;
 }
 ```
 
@@ -858,13 +876,13 @@ Also ensure your completion handler uses synthesis as fallback:
 
 ```tsx
 const handleComplete = useCallback(() => {
-    setIsRunning(false);
-    setStreamUrl('');
-    
-    // If we have synthesis but no final result, use synthesis
-    if (synthesis?.text && !finalResult) {
-        setFinalResult(synthesis.text);
-    }
+  setIsRunning(false);
+  setStreamUrl("");
+
+  // If we have synthesis but no final result, use synthesis
+  if (synthesis?.text && !finalResult) {
+    setFinalResult(synthesis.text);
+  }
 }, [synthesis, finalResult]);
 ```
 
@@ -879,10 +897,10 @@ public function instructions(): string
 {
     return <<<'INSTRUCTIONS'
     Create DETAILED, SPECIFIC plans with 4-6 steps.
-    
+
     Good: "Get weather for Tokyo using the get_weather tool"
     Bad: "Check Tokyo"
-    
+
     Each step should be clear and actionable.
     INSTRUCTIONS;
 }
@@ -899,7 +917,7 @@ public function instructions(): string
 {
     return <<<'INSTRUCTIONS'
     Create plans with SEQUENTIAL steps where each step builds on previous results.
-    
+
     Step 1 should gather initial data.
     Step 2 should process or extend that data.
     Final step should synthesize everything.

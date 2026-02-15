@@ -51,13 +51,14 @@ The Laravel AI SDK gives you agents, tools, streaming, and conversations. But wh
 
 Laragentic adds that missing piece:
 
-| What you get            | What it does                                                         |
-| ----------------------- | -------------------------------------------------------------------- |
-| **ReAct Loop**          | Think → call tools → observe results → repeat until done             |
-| **Plan-Execute Loop**   | Create a plan → execute each step → synthesize a final answer        |
-| **Lifecycle Callbacks** | Hook into every phase to stream progress, log, or broadcast          |
-| **Configurable Limits** | Set max iterations/steps to control cost and prevent runaway loops   |
-| **Adaptive Replanning** | The Plan-Execute loop revises its plan mid-execution if a step fails |
+| What you get                 | What it does                                                         |
+| ---------------------------- | -------------------------------------------------------------------- |
+| **ReAct Loop**               | Think → call tools → observe results → repeat until done             |
+| **Plan-Execute Loop**        | Create a plan → execute each step → synthesize a final answer        |
+| **Chain-of-Thought Loop**    | Reason iteratively → evaluate understanding → continue until confident|
+| **Lifecycle Callbacks**      | Hook into every phase to stream progress, log, or broadcast          |
+| **Configurable Limits**      | Set max iterations/steps to control cost and prevent runaway loops   |
+| **Adaptive Replanning**      | The Plan-Execute loop revises its plan mid-execution if a step fails |
 
 **Zero configuration required.** Add `use ReActLoop` to your agent, call `->reactLoop()`, and it works.
 
@@ -643,32 +644,231 @@ class MyAgent implements Agent, HasTools
 
 ---
 
-## Choosing a Loop
+## Chain-of-Thought Loop
 
-|                  | ReAct Loop                             | Plan-Execute Loop                      |
-| ---------------- | -------------------------------------- | -------------------------------------- |
-| **Pattern**      | Thought → Action → Observation         | Plan → Execute Steps → Synthesize      |
-| **Best for**     | Tool-driven tasks, real-time reasoning | Multi-step workflows, sequential tasks |
-| **Tool calls**   | Each iteration may call tools          | Each step may call tools               |
-| **Adaptiveness** | Continuous (every iteration)           | Optional replanning on failure         |
-| **Token usage**  | Lower per-iteration                    | Higher (planning + steps + synthesis)  |
-| **Visibility**   | Per-iteration callbacks                | Per-step + plan + synthesis callbacks  |
+The Chain-of-Thought (CoT) loop implements iterative self-reflection reasoning where the agent progressively builds understanding until confident:
 
-**Use both together** — an agent can `use ReActLoop, PlanExecuteLoop` and you choose which loop to call:
+```
+User Problem
+  ↓
+[REASONING ITERATION 1]
+  ├─ Step-by-step analysis of problem
+  ├─ Identify what's known and unknown
+  ├─ Call tools if information needed
+  └─ Self-evaluate: "Do I understand enough to solve this?"
+  ↓
+Confident? → No  → [REASONING ITERATION 2]
+           → Yes → [FINAL ANSWER]
+```
+
+**Best for:**
+
+- Complex reasoning problems requiring deep analysis
+- Mathematical, logical, or analytical tasks
+- Scenarios where understanding must build progressively
+- Problems where agent should evaluate its own confidence
+
+### Usage
+
+```php
+<?php
+
+namespace App\Agents;
+
+use Laravel\Ai\Contracts\Agent;
+use Laravel\Ai\Contracts\HasTools;
+use Laravel\Ai\Promptable;
+use Laragentic\Loops\ChainOfThoughtLoop;
+
+class MathAgent implements Agent, HasTools
+{
+    use Promptable, ChainOfThoughtLoop;
+
+    public function instructions(): string
+    {
+        return 'You are a mathematics expert. Think through problems step by step, '
+             . 'evaluate your understanding, and provide clear reasoning.';
+    }
+
+    public function tools(): iterable
+    {
+        return [new CalculatorTool, new WebSearchTool];
+    }
+}
+```
+
+```php
+// Basic usage - agent iterates until confident
+$result = (new MathAgent)->chainOfThought(
+    'A train leaves Tokyo at 9am traveling 80km/h. Another leaves Osaka at 10am '
+    . 'traveling 100km/h toward Tokyo. They are 400km apart. When do they meet?'
+);
+
+echo $result->text();                // Final answer with complete reasoning
+echo $result->reasoningIterations;   // Number of iterations taken (e.g., 3)
+
+// Get all reasoning steps
+foreach ($result->steps as $step) {
+    echo "Iteration {$step->iteration}: {$step->reasoning()}\n";
+    if ($step->hasToolCalls()) {
+        echo "Tools used: " . count($step->toolCalls) . "\n";
+    }
+}
+```
+
+```php
+// With specific provider and model
+$result = (new MathAgent)->chainOfThought(
+    prompt: 'Analyze this complex problem...',
+    provider: 'anthropic',
+    model: 'claude-opus-4-6',
+);
+```
+
+### Configuration
+
+Override the max reasoning iterations per-call, in config, or via environment variables:
+
+```php
+// Fluent API (per-call)
+$result = (new MathAgent)
+    ->maxReasoningIterations(10)
+    ->chainOfThought('Complex problem...');
+```
+
+```php
+// config/agentic.php
+'chain_of_thought' => [
+    'max_reasoning_iterations' => 5,
+    'throw_on_max_iterations' => false,
+    'require_confidence_check' => true,
+],
+```
+
+```env
+AGENTIC_COT_MAX_ITERATIONS=5
+AGENTIC_COT_THROW_ON_MAX=false
+```
+
+### Callbacks
+
+Hook into any phase of the reasoning loop. Callbacks are optional — the loop works perfectly without them.
+
+```php
+$result = (new MathAgent)
+    ->onIterationStart(function (int $iteration) {
+        broadcast(new ReasoningIterationStarted($iteration));
+    })
+    ->onAfterReasoning(function (AgentResponse $response, int $iteration) {
+        broadcast(new ReasoningStepComplete($response->text, $iteration));
+    })
+    ->onBeforeAction(function (string $tool, array $args, int $iteration) {
+        broadcast(new ToolCallStarted($tool, $args, $iteration));
+    })
+    ->onReflection(function (string $reflectionPrompt, int $iteration) {
+        logger()->info("Iteration {$iteration}: Entering reflection phase");
+    })
+    ->chainOfThought('Complex problem requiring deep analysis...');
+```
+
+| Callback                 | When it fires              | Parameters                                                  |
+| ------------------------ | -------------------------- | ----------------------------------------------------------- |
+| `onLoopStart`            | Loop begins                | `string $prompt`                                            |
+| `onLoopComplete`         | Final answer produced      | `AgentResponse $response, int $totalIterations`             |
+| `onMaxIterationsReached` | Iteration limit hit        | `AgentResponse $response, int $totalIterations`             |
+| `onIterationStart`       | Each iteration starts      | `int $iteration`                                            |
+| `onIterationEnd`         | Each iteration ends        | `int $iteration, AgentResponse $response`                   |
+| `onBeforeReasoning`      | Before LLM reasoning       | `string $prompt, int $iteration`                            |
+| `onAfterReasoning`       | After LLM responds         | `AgentResponse $response, int $iteration`                   |
+| `onBeforeAction`         | Before tool call           | `string $tool, array $args, int $iteration`                 |
+| `onAfterAction`          | After tool returns         | `string $tool, array $args, string $result, int $iteration` |
+| `onReflection`           | Building reflection prompt | `string $reflectionPrompt, int $iteration`                  |
+
+### Result
+
+The `chainOfThought()` method returns a `CoTResult` that wraps the final `AgentResponse` with reasoning metadata:
+
+```php
+$result = (new MathAgent)->chainOfThought('Problem...');
+
+$result->text();               // Final response text
+$result->conversationId();     // Conversation ID
+$result->reasoningIterations;  // Total iterations executed
+$result->completed();          // true if agent became confident
+$result->reachedMaxIterations; // true if iteration limit was hit
+$result->steps;                // Array of CoTStep objects
+$result->allToolCalls();       // All tool calls across all iterations
+$result->reasoningSteps();     // Array of reasoning text from each step
+$result->confidentStep();      // The step where agent became confident
+```
+
+### Customization
+
+Override these methods on your agent to customize reasoning behavior:
 
 ```php
 class MyAgent implements Agent, HasTools
 {
-    use Promptable, ReActLoop, PlanExecuteLoop;
+    use Promptable, ChainOfThoughtLoop;
 
-    // ...
+    // Customize initial reasoning prompt
+    protected function buildInitialPrompt(string $userProblem): string { /* ... */ }
+
+    // Customize reflection prompt between iterations
+    protected function buildReflectionPrompt(?string $observation): string { /* ... */ }
+
+    // Customize when reasoning is considered complete
+    protected function isReasoningComplete(AgentResponse $response): bool { /* ... */ }
+
+    // Customize how tool results are presented
+    protected function formatObservation(array $toolCallRecords): string { /* ... */ }
+}
+```
+
+---
+
+## Choosing a Loop
+
+|                  | ReAct Loop                             | Plan-Execute Loop                      | Chain-of-Thought Loop                  |
+| ---------------- | -------------------------------------- | -------------------------------------- | -------------------------------------- |
+| **Pattern**      | Thought → Action → Observation         | Plan → Execute Steps → Synthesize      | Reasoning → Self-Eval → Confidence     |
+| **Best for**     | Tool-driven tasks, real-time reasoning | Multi-step workflows, sequential tasks | Deep analysis, progressive reasoning   |
+| **Tool calls**   | Each iteration may call tools          | Each step may call tools               | Each iteration may call tools          |
+| **Adaptiveness** | Continuous (every iteration)           | Optional replanning on failure         | Continuous self-reflection             |
+| **Token usage**  | Lower per-iteration                    | Higher (planning + steps + synthesis)  | Medium (iterative reasoning)           |
+| **Visibility**   | Per-iteration callbacks                | Per-step + plan + synthesis callbacks  | Per-iteration + reflection callbacks   |
+
+**When to use each:**
+
+- **ReAct Loop** — Tool-heavy tasks requiring rapid action and observation (weather queries, data lookups, calculations)
+- **Plan-Execute Loop** — Complex workflows with sequential dependencies (research reports, multi-stage analysis)
+- **Chain-of-Thought Loop** — Deep reasoning problems requiring progressive understanding (math proofs, legal analysis, complex decision-making)
+
+**Use multiple loops together** — an agent can `use ReActLoop, PlanExecuteLoop, ChainOfThoughtLoop` and choose which loop to call:
+
+```php
+class HybridAgent implements Agent, HasTools
+{
+    use Promptable, ReActLoop, PlanExecuteLoop, ChainOfThoughtLoop;
+
+    public function solve(string $problem, string $approach)
+    {
+        return match($approach) {
+            'action' => $this->reactLoop($problem),      // Fast tool-driven
+            'workflow' => $this->planExecute($problem),  // Multi-step plan
+            'reasoning' => $this->chainOfThought($problem), // Deep analysis
+        };
+    }
 }
 
 // Quick tool-driven question
-$result = (new MyAgent)->reactLoop('What is the weather in Tokyo?');
+$result = (new HybridAgent)->reactLoop('What is the weather in Tokyo?');
 
 // Complex multi-step task
-$result = (new MyAgent)->planExecute('Research Q4 sales and create a report.');
+$result = (new HybridAgent)->planExecute('Research Q4 sales and create a report.');
+
+// Deep reasoning problem
+$result = (new HybridAgent)->chainOfThought('Analyze the trade-offs between approaches A and B.');
 ```
 
 ---
@@ -733,6 +933,7 @@ Comprehensive streaming examples and documentation are available in the [`tutori
 - **[Quick Reference](tutorial/quick-reference.md)** — Callback cheat sheet and essential streaming patterns
 - **[Streaming ReAct Loop](tutorial/streaming-react-loop.md)** — Stream real-time progress updates from ReAct loops
 - **[Streaming Plan-Execute Loop](tutorial/streaming-plan-execute-loop.md)** — Stream planning, execution, and synthesis progress
+- **[Streaming Chain-of-Thought Loop](tutorial/streaming-chain-of-thought-loop.md)** — Stream iterative self-reflection and deep reasoning
 
 > **Note:** The tutorial folder is excluded from production installs via `.gitattributes`.
 

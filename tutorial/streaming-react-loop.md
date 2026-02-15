@@ -4,7 +4,7 @@ Deep dive into the ReAct (Reasoning + Acting) loop pattern with real-time stream
 
 ![ReAct Loop in Action](images/react-loop.png)
 
-*The agent autonomously searches, calculates, and synthesizes the answer — watch each iteration in real-time.*
+_The agent autonomously searches, calculates, and synthesizes the answer — watch each iteration in real-time._
 
 ## What is ReAct?
 
@@ -59,7 +59,7 @@ class SimpleReActAgent implements Agent, HasTools
         1. Think about what information you need
         2. Use the available tools to get that information
         3. Provide a clear answer based on the tool results
-        
+
         Don't guess — use the tools!
         INSTRUCTIONS;
     }
@@ -81,9 +81,9 @@ use App\Agents\SimpleReActAgent;
 
 Route::get('/simple', function () {
     $agent = new SimpleReActAgent;
-    
+
     $result = $agent->reactLoop('What is the weather in Tokyo?');
-    
+
     return response()->json([
         'answer' => $result->text,
         'iterations' => $result->iterations,
@@ -117,33 +117,33 @@ sequenceDiagram
 
     Client->>Server: GET /stream?message=...
     Server->>Agent: reactLoopStream(message)
-    
+
     loop Each Iteration
         Agent->>Server: onBeforeThought
         Server-->>Client: SSE: thinking
-        
+
         Agent->>Agent: Think (LLM call)
-        
+
         Agent->>Server: onAfterThought
         Server-->>Client: SSE: thought
-        
+
         alt Has Tool Calls
             loop Each Tool
                 Agent->>Server: onBeforeAction
                 Server-->>Client: SSE: action (start)
-                
+
                 Agent->>Tools: Execute tool
                 Tools-->>Agent: Result
-                
+
                 Agent->>Server: onAfterAction
                 Server-->>Client: SSE: action (complete)
             end
-            
+
             Agent->>Server: onObservation
             Server-->>Client: SSE: observation
         end
     end
-    
+
     Agent->>Server: onLoopComplete
     Server-->>Client: SSE: complete
     Server-->>Client: SSE: </stream>
@@ -213,105 +213,103 @@ Route::get('/stream', function () {
 ### React Component
 
 ```tsx
-import { useEventStream } from '@laravel/stream-react';
-import { useState, useCallback } from 'react';
+import { useEventStream } from "@laravel/stream-react";
+import { useState, useCallback } from "react";
 
 export default function ReActDemo() {
-    const [message, setMessage] = useState('');
-    const [streamUrl, setStreamUrl] = useState('');
-    const [iterations, setIterations] = useState([]);
-    const [finalAnswer, setFinalAnswer] = useState('');
+  const [message, setMessage] = useState("");
+  const [streamUrl, setStreamUrl] = useState("");
+  const [iterations, setIterations] = useState([]);
+  const [finalAnswer, setFinalAnswer] = useState("");
 
-    const handleEvent = useCallback((event: MessageEvent) => {
-        const data = JSON.parse(event.data);
+  const handleEvent = useCallback((event: MessageEvent) => {
+    const data = JSON.parse(event.data);
 
-        if (event.type === 'thinking') {
-            setIterations(prev => [...prev, { 
-                id: data.iteration, 
-                status: 'thinking' 
-            }]);
-        } else if (event.type === 'action') {
-            setIterations(prev => prev.map((iter, idx) => 
-                idx === prev.length - 1 
-                    ? { ...iter, action: data } 
-                    : iter
-            ));
-        } else if (event.type === 'observation') {
-            setIterations(prev => prev.map((iter, idx) => 
-                idx === prev.length - 1 
-                    ? { ...iter, observation: data.text } 
-                    : iter
-            ));
-        } else if (event.type === 'complete') {
-            setFinalAnswer(data.text);
-        }
-    }, []);
+    if (event.type === "thinking") {
+      setIterations((prev) => [
+        ...prev,
+        {
+          id: data.iteration,
+          status: "thinking",
+        },
+      ]);
+    } else if (event.type === "action") {
+      setIterations((prev) =>
+        prev.map((iter, idx) =>
+          idx === prev.length - 1 ? { ...iter, action: data } : iter,
+        ),
+      );
+    } else if (event.type === "observation") {
+      setIterations((prev) =>
+        prev.map((iter, idx) =>
+          idx === prev.length - 1 ? { ...iter, observation: data.text } : iter,
+        ),
+      );
+    } else if (event.type === "complete") {
+      setFinalAnswer(data.text);
+    }
+  }, []);
 
-    const handleStart = () => {
-        setIterations([]);
-        setFinalAnswer('');
-        setStreamUrl(`/stream?message=${encodeURIComponent(message)}`);
-    };
+  const handleStart = () => {
+    setIterations([]);
+    setFinalAnswer("");
+    setStreamUrl(`/stream?message=${encodeURIComponent(message)}`);
+  };
 
-    return (
-        <div>
-            {streamUrl && (
-                <StreamListener 
-                    url={streamUrl} 
-                    onEvent={handleEvent} 
-                />
-            )}
+  return (
+    <div>
+      {streamUrl && <StreamListener url={streamUrl} onEvent={handleEvent} />}
 
-            <input 
-                value={message}
-                onChange={e => setMessage(e.target.value)}
-                placeholder="Ask a question..."
-            />
-            <button onClick={handleStart}>Ask</button>
+      <input
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        placeholder="Ask a question..."
+      />
+      <button onClick={handleStart}>Ask</button>
 
-            {/* Display iterations */}
-            {iterations.map(iter => (
-                <div key={iter.id}>
-                    <h3>Iteration {iter.id}</h3>
-                    {iter.status === 'thinking' && <p>🤔 Thinking...</p>}
-                    {iter.action && (
-                        <div>
-                            <strong>Tool:</strong> {iter.action.tool}
-                            <br />
-                            <strong>Result:</strong> {iter.action.result}
-                        </div>
-                    )}
-                    {iter.observation && <p>👁️ {iter.observation}</p>}
-                </div>
-            ))}
-
-            {/* Final answer */}
-            {finalAnswer && (
-                <div className="final-answer">
-                    <h2>Answer:</h2>
-                    <p>{finalAnswer}</p>
-                </div>
-            )}
+      {/* Display iterations */}
+      {iterations.map((iter) => (
+        <div key={iter.id}>
+          <h3>Iteration {iter.id}</h3>
+          {iter.status === "thinking" && <p>🤔 Thinking...</p>}
+          {iter.action && (
+            <div>
+              <strong>Tool:</strong> {iter.action.tool}
+              <br />
+              <strong>Result:</strong> {iter.action.result}
+            </div>
+          )}
+          {iter.observation && <p>👁️ {iter.observation}</p>}
         </div>
-    );
+      ))}
+
+      {/* Final answer */}
+      {finalAnswer && (
+        <div className="final-answer">
+          <h2>Answer:</h2>
+          <p>{finalAnswer}</p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function StreamListener({ url, onEvent }) {
-    // Wrap error handler to filter out @laravel/stream-react bugs
-    const handleError = (error?: any) => {
-        if (error?.message?.includes('startsWith') || error?.type === 'error') {
-            console.log('Stream closed normally');
-        } else {
-            console.error('Stream error:', error);
-        }
-    };
+  // Wrap error handler to filter out @laravel/stream-react bugs
+  const handleError = (error?: any) => {
+    if (error?.message?.includes("startsWith") || error?.type === "error") {
+      console.log("Stream closed normally");
+    } else {
+      console.error("Stream error:", error);
+    }
+  };
 
-    useEventStream(url, {
-        eventName: ['thinking', 'action', 'observation', 'complete'],
-        onMessage: onEvent,
-        onError: handleError,
-    });
-    return null;
+  useEventStream(url, {
+    eventName: ["thinking", "action", "observation", "complete"],
+    onMessage: onEvent,
+    onError: handleError,
+  });
+  return null;
 }
 ```
 
@@ -332,7 +330,7 @@ Route::get('/stream-detailed', function () {
                     data: ['message' => $prompt],
                 );
             })
-            
+
             // ─── Iteration Level ───────────────────────────────
             ->onIterationStart(function (int $iteration) {
                 yield new StreamedEvent(
@@ -340,7 +338,7 @@ Route::get('/stream-detailed', function () {
                     data: ['number' => $iteration, 'status' => 'started'],
                 );
             })
-            
+
             // ─── Thought Phase ─────────────────────────────────
             ->onBeforeThought(function (string $prompt, int $iteration) {
                 yield new StreamedEvent(
@@ -359,7 +357,7 @@ Route::get('/stream-detailed', function () {
                     ],
                 );
             })
-            
+
             // ─── Action Phase ──────────────────────────────────
             ->onBeforeAction(function (string $tool, array $args, int $iteration) {
                 yield new StreamedEvent(
@@ -383,7 +381,7 @@ Route::get('/stream-detailed', function () {
                     ],
                 );
             })
-            
+
             // ─── Observation Phase ─────────────────────────────
             ->onObservation(function (string $observation, int $iteration) {
                 yield new StreamedEvent(
@@ -394,7 +392,7 @@ Route::get('/stream-detailed', function () {
                     ],
                 );
             })
-            
+
             // ─── Iteration End ─────────────────────────────────
             ->onIterationEnd(function (int $iteration) {
                 yield new StreamedEvent(
@@ -402,7 +400,7 @@ Route::get('/stream-detailed', function () {
                     data: ['number' => $iteration, 'status' => 'completed'],
                 );
             })
-            
+
             // ─── Loop Complete ─────────────────────────────────
             ->onLoopComplete(function ($response, int $iterations) {
                 yield new StreamedEvent(
@@ -414,7 +412,7 @@ Route::get('/stream-detailed', function () {
                     ],
                 );
             })
-            
+
             // ─── Error Handling ────────────────────────────────
             ->onMaxIterationsReached(function ($response, int $iterations) {
                 yield new StreamedEvent(
@@ -542,7 +540,7 @@ $agent
         // Track token usage
         $inputTokens = $response->usage['input_tokens'] ?? 0;
         $outputTokens = $response->usage['output_tokens'] ?? 0;
-        
+
         // Calculate cost (example for Claude Opus)
         $cost = ($inputTokens / 1_000_000 * 5) + ($outputTokens / 1_000_000 * 25);
         $totalCost += $cost;
@@ -581,14 +579,14 @@ yield from $agent->reactLoopStream('Complex multi-step task...');
 
 ```tsx
 const handleEvent = (event) => {
-    if (event.type === 'max_iterations') {
-        const data = JSON.parse(event.data);
-        alert(data.message);
-        // Show partial result if available
-        if (data.partial_result) {
-            setAnswer(data.partial_result);
-        }
+  if (event.type === "max_iterations") {
+    const data = JSON.parse(event.data);
+    alert(data.message);
+    // Show partial result if available
+    if (data.partial_result) {
+      setAnswer(data.partial_result);
     }
+  }
 };
 ```
 
@@ -610,14 +608,14 @@ The demo includes:
 
 ## Comparison: ReAct vs Plan-Execute
 
-| Feature | ReAct Loop | Plan-Execute Loop |
-|---------|-----------|-------------------|
-| **Use Case** | Dynamic, exploratory tasks | Structured, multi-step tasks |
-| **Planning** | Implicit (agent decides per iteration) | Explicit (creates plan upfront) |
-| **Tool Calls** | Multiple per iteration | Typically one per step |
-| **Flexibility** | High (adapts each iteration) | Medium (follows plan, can replan) |
-| **Visibility** | See reasoning at each step | See entire plan upfront |
-| **Best For** | Q&A, research, investigation | Reports, analysis, workflows |
+| Feature         | ReAct Loop                             | Plan-Execute Loop                 |
+| --------------- | -------------------------------------- | --------------------------------- |
+| **Use Case**    | Dynamic, exploratory tasks             | Structured, multi-step tasks      |
+| **Planning**    | Implicit (agent decides per iteration) | Explicit (creates plan upfront)   |
+| **Tool Calls**  | Multiple per iteration                 | Typically one per step            |
+| **Flexibility** | High (adapts each iteration)           | Medium (follows plan, can replan) |
+| **Visibility**  | See reasoning at each step             | See entire plan upfront           |
+| **Best For**    | Q&A, research, investigation           | Reports, analysis, workflows      |
 
 **Example tasks:**
 
@@ -636,21 +634,21 @@ The demo includes:
 
 ```tsx
 const handleError = (error?: any) => {
-    // Known library bug: throws on normal closure
-    if (error?.message?.includes('startsWith') || error?.type === 'error') {
-        console.log('Stream closed normally');
-        onComplete(); // Treat as success
-    } else {
-        console.error('Stream error:', error);
-        onError(); // Real error
-    }
+  // Known library bug: throws on normal closure
+  if (error?.message?.includes("startsWith") || error?.type === "error") {
+    console.log("Stream closed normally");
+    onComplete(); // Treat as success
+  } else {
+    console.error("Stream error:", error);
+    onError(); // Real error
+  }
 };
 
 useEventStream(url, {
-    eventName: ['thinking', 'action', 'observation', 'complete', 'error'],
-    onMessage: onEvent,
-    onComplete,
-    onError: handleError,
+  eventName: ["thinking", "action", "observation", "complete", "error"],
+  onMessage: onEvent,
+  onComplete,
+  onError: handleError,
 });
 ```
 
@@ -665,7 +663,7 @@ public function instructions(): string
 {
     return <<<'INSTRUCTIONS'
     Use tools to gather information, then provide a FINAL answer.
-    
+
     When you have enough information, respond with your answer.
     Do NOT call tools again after you have the data you need.
     INSTRUCTIONS;
@@ -683,7 +681,7 @@ public function instructions(): string
 {
     return <<<'INSTRUCTIONS'
     You MUST use the available tools. Do not guess or make up information.
-    
+
     For weather: ALWAYS use get_weather tool
     For calculations: ALWAYS use calculate tool
     INSTRUCTIONS;
@@ -700,7 +698,7 @@ public function instructions(): string
 Route::get('/stream', function () {
     ini_set('output_buffering', 'off');
     ini_set('zlib.output_compression', 'off');
-    
+
     return response()->eventStream(/* ... */);
 });
 ```

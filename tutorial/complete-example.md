@@ -54,18 +54,18 @@ Configure the provider in `config/ai.php`:
 ```php
 return [
     'default' => 'openai', // or 'anthropic', 'gemini'
-    
+
     'drivers' => [
         'openai' => [
             'key' => env('OPENAI_API_KEY'),
             'model' => 'gpt-4o', // Latest model
         ],
-        
+
         'anthropic' => [
             'key' => env('ANTHROPIC_API_KEY'),
             'model' => 'claude-opus-4-6', // Latest model
         ],
-        
+
         'gemini' => [
             'key' => env('GEMINI_API_KEY'),
             'model' => 'gemini-3-pro', // Latest model
@@ -279,7 +279,7 @@ class ChatAgent implements Agent, Conversational, HasTools
     {
         return <<<'INSTRUCTIONS'
         You are a helpful AI assistant with access to several tools.
-        
+
         When answering questions:
         - Always use the available tools to get accurate information
         - For weather queries, use the get_weather tool
@@ -287,7 +287,7 @@ class ChatAgent implements Agent, Conversational, HasTools
         - For mathematical calculations, use the calculate tool
         - Provide clear, concise answers based on the tool results
         - Remember context from previous messages in the conversation
-        
+
         Be conversational and helpful. Don't guess — use the tools!
         INSTRUCTIONS;
     }
@@ -394,239 +394,256 @@ Route::get('/chat/stream', function () {
 Create `resources/js/pages/Chat.tsx`:
 
 ```tsx
-import { Head } from '@inertiajs/react';
-import { useEventStream } from '@laravel/stream-react';
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { Head } from "@inertiajs/react";
+import { useEventStream } from "@laravel/stream-react";
+import { useState, useCallback, useRef, useEffect } from "react";
 
 type Message = {
-    id: string;
-    role: 'user' | 'assistant';
-    content: string;
-    timestamp: Date;
-    isStreaming?: boolean;
-    toolCalls?: Array<{ tool: string; args: any; result?: string }>;
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: Date;
+  isStreaming?: boolean;
+  toolCalls?: Array<{ tool: string; args: any; result?: string }>;
 };
 
 export default function Chat() {
-    const [input, setInput] = useState('');
-    const [messages, setMessages] = useState<Message[]>([]);
-    const [conversationId, setConversationId] = useState<string | null>(null);
-    const [streamUrl, setStreamUrl] = useState('');
-    const [isStreaming, setIsStreaming] = useState(false);
-    const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [streamUrl, setStreamUrl] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-    // Auto-scroll to bottom
-    useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages]);
+  // Auto-scroll to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
-    const handleEvent = useCallback((event: MessageEvent) => {
-        const eventData = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+  const handleEvent = useCallback((event: MessageEvent) => {
+    const eventData =
+      typeof event.data === "string" ? JSON.parse(event.data) : event.data;
 
-        if (event.type === 'action') {
-            if (eventData.stage === 'start') {
-                // Tool call started
-                setMessages(prev => {
-                    const lastMsg = prev[prev.length - 1];
-                    if (lastMsg?.isStreaming) {
-                        return [...prev.slice(0, -1), {
-                            ...lastMsg,
-                            toolCalls: [
-                                ...(lastMsg.toolCalls || []),
-                                { tool: eventData.tool, args: eventData.args }
-                            ],
-                        }];
-                    }
-                    return prev;
-                });
-            } else if (eventData.stage === 'complete') {
-                // Tool call completed
-                setMessages(prev => {
-                    const lastMsg = prev[prev.length - 1];
-                    if (lastMsg?.isStreaming && lastMsg.toolCalls) {
-                        const updatedToolCalls = lastMsg.toolCalls.map(tc =>
-                            tc.tool === eventData.tool && !tc.result
-                                ? { ...tc, result: eventData.result }
-                                : tc
-                        );
-                        return [...prev.slice(0, -1), {
-                            ...lastMsg,
-                            toolCalls: updatedToolCalls,
-                        }];
-                    }
-                    return prev;
-                });
-            }
-        } else if (event.type === 'complete') {
-            // Stream complete
-            setMessages(prev => {
-                const lastMsg = prev[prev.length - 1];
-                if (lastMsg?.isStreaming) {
-                    return [...prev.slice(0, -1), {
-                        ...lastMsg,
-                        content: eventData.text,
-                        isStreaming: false,
-                    }];
-                }
-                return prev;
-            });
-
-            if (eventData.conversationId) {
-                setConversationId(eventData.conversationId);
-            }
+    if (event.type === "action") {
+      if (eventData.stage === "start") {
+        // Tool call started
+        setMessages((prev) => {
+          const lastMsg = prev[prev.length - 1];
+          if (lastMsg?.isStreaming) {
+            return [
+              ...prev.slice(0, -1),
+              {
+                ...lastMsg,
+                toolCalls: [
+                  ...(lastMsg.toolCalls || []),
+                  { tool: eventData.tool, args: eventData.args },
+                ],
+              },
+            ];
+          }
+          return prev;
+        });
+      } else if (eventData.stage === "complete") {
+        // Tool call completed
+        setMessages((prev) => {
+          const lastMsg = prev[prev.length - 1];
+          if (lastMsg?.isStreaming && lastMsg.toolCalls) {
+            const updatedToolCalls = lastMsg.toolCalls.map((tc) =>
+              tc.tool === eventData.tool && !tc.result
+                ? { ...tc, result: eventData.result }
+                : tc,
+            );
+            return [
+              ...prev.slice(0, -1),
+              {
+                ...lastMsg,
+                toolCalls: updatedToolCalls,
+              },
+            ];
+          }
+          return prev;
+        });
+      }
+    } else if (event.type === "complete") {
+      // Stream complete
+      setMessages((prev) => {
+        const lastMsg = prev[prev.length - 1];
+        if (lastMsg?.isStreaming) {
+          return [
+            ...prev.slice(0, -1),
+            {
+              ...lastMsg,
+              content: eventData.text,
+              isStreaming: false,
+            },
+          ];
         }
-    }, []);
+        return prev;
+      });
 
-    const handleComplete = useCallback(() => {
-        setIsStreaming(false);
-        setStreamUrl('');
-    }, []);
+      if (eventData.conversationId) {
+        setConversationId(eventData.conversationId);
+      }
+    }
+  }, []);
 
-    const handleError = useCallback(() => {
-        setIsStreaming(false);
-        setStreamUrl('');
-    }, []);
+  const handleComplete = useCallback(() => {
+    setIsStreaming(false);
+    setStreamUrl("");
+  }, []);
 
-    const handleSend = () => {
-        if (!input.trim() || isStreaming) return;
+  const handleError = useCallback(() => {
+    setIsStreaming(false);
+    setStreamUrl("");
+  }, []);
 
-        // Add user message
-        const userMessage: Message = {
-            id: Date.now().toString(),
-            role: 'user',
-            content: input.trim(),
-            timestamp: new Date(),
-        };
-        setMessages(prev => [...prev, userMessage]);
+  const handleSend = () => {
+    if (!input.trim() || isStreaming) return;
 
-        // Add placeholder assistant message
-        const assistantMessage: Message = {
-            id: (Date.now() + 1).toString(),
-            role: 'assistant',
-            content: '',
-            timestamp: new Date(),
-            isStreaming: true,
-            toolCalls: [],
-        };
-        setMessages(prev => [...prev, assistantMessage]);
-
-        // Start streaming
-        setIsStreaming(true);
-        const params = new URLSearchParams({ message: input.trim() });
-        if (conversationId) {
-            params.append('conversation_id', conversationId);
-        }
-        setStreamUrl(`/chat/stream?${params.toString()}`);
-        setInput('');
+    // Add user message
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: input.trim(),
+      timestamp: new Date(),
     };
+    setMessages((prev) => [...prev, userMessage]);
 
-    return (
-        <>
-            <Head title="Chat" />
+    // Add placeholder assistant message
+    const assistantMessage: Message = {
+      id: (Date.now() + 1).toString(),
+      role: "assistant",
+      content: "",
+      timestamp: new Date(),
+      isStreaming: true,
+      toolCalls: [],
+    };
+    setMessages((prev) => [...prev, assistantMessage]);
 
-            {streamUrl && (
-                <StreamListener
-                    url={streamUrl}
-                    onEvent={handleEvent}
-                    onComplete={handleComplete}
-                    onError={handleError}
-                />
+    // Start streaming
+    setIsStreaming(true);
+    const params = new URLSearchParams({ message: input.trim() });
+    if (conversationId) {
+      params.append("conversation_id", conversationId);
+    }
+    setStreamUrl(`/chat/stream?${params.toString()}`);
+    setInput("");
+  };
+
+  return (
+    <>
+      <Head title="Chat" />
+
+      {streamUrl && (
+        <StreamListener
+          url={streamUrl}
+          onEvent={handleEvent}
+          onComplete={handleComplete}
+          onError={handleError}
+        />
+      )}
+
+      <div className="min-h-screen bg-gray-50 p-6 dark:bg-gray-900">
+        <div className="mx-auto max-w-4xl">
+          <h1 className="mb-6 text-3xl font-bold">AI Chat Agent</h1>
+
+          {/* Chat Messages */}
+          <div
+            className="mb-4 rounded-lg bg-white p-6 shadow dark:bg-gray-800"
+            style={{ height: "600px", overflowY: "auto" }}
+          >
+            {messages.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-gray-500">
+                Start a conversation...
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {messages.map((msg) => (
+                  <MessageBubble key={msg.id} message={msg} />
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
             )}
+          </div>
 
-            <div className="min-h-screen bg-gray-50 p-6 dark:bg-gray-900">
-                <div className="mx-auto max-w-4xl">
-                    <h1 className="mb-6 text-3xl font-bold">AI Chat Agent</h1>
-
-                    {/* Chat Messages */}
-                    <div className="mb-4 rounded-lg bg-white p-6 shadow dark:bg-gray-800" style={{ height: '600px', overflowY: 'auto' }}>
-                        {messages.length === 0 ? (
-                            <div className="flex h-full items-center justify-center text-gray-500">
-                                Start a conversation...
-                            </div>
-                        ) : (
-                            <div className="space-y-4">
-                                {messages.map((msg) => (
-                                    <MessageBubble key={msg.id} message={msg} />
-                                ))}
-                                <div ref={messagesEndRef} />
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Input */}
-                    <div className="flex gap-3">
-                        <input
-                            type="text"
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleSend();
-                            }}
-                            placeholder="Type your message..."
-                            disabled={isStreaming}
-                            className="flex-1 rounded-lg border px-4 py-3 disabled:opacity-50"
-                        />
-                        <button
-                            onClick={handleSend}
-                            disabled={!input.trim() || isStreaming}
-                            className="rounded-lg bg-blue-600 px-6 py-3 text-white disabled:opacity-50"
-                        >
-                            Send
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </>
-    );
+          {/* Input */}
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSend();
+              }}
+              placeholder="Type your message..."
+              disabled={isStreaming}
+              className="flex-1 rounded-lg border px-4 py-3 disabled:opacity-50"
+            />
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() || isStreaming}
+              className="rounded-lg bg-blue-600 px-6 py-3 text-white disabled:opacity-50"
+            >
+              Send
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
 }
 
 function MessageBubble({ message }: { message: Message }) {
-    return (
-        <div className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[80%] rounded-lg px-4 py-3 ${
-                message.role === 'user'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 dark:bg-gray-700'
-            }`}>
-                {/* Tool calls */}
-                {message.toolCalls && message.toolCalls.length > 0 && (
-                    <div className="mb-3 space-y-2">
-                        {message.toolCalls.map((tc, idx) => (
-                            <div key={idx} className="rounded bg-white/10 p-2 text-xs">
-                                <div className="font-semibold">🔧 {tc.tool}</div>
-                                {tc.result && <div className="mt-1">→ {tc.result}</div>}
-                            </div>
-                        ))}
-                    </div>
-                )}
+  return (
+    <div
+      className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+    >
+      <div
+        className={`max-w-[80%] rounded-lg px-4 py-3 ${
+          message.role === "user"
+            ? "bg-blue-600 text-white"
+            : "bg-gray-100 dark:bg-gray-700"
+        }`}
+      >
+        {/* Tool calls */}
+        {message.toolCalls && message.toolCalls.length > 0 && (
+          <div className="mb-3 space-y-2">
+            {message.toolCalls.map((tc, idx) => (
+              <div key={idx} className="rounded bg-white/10 p-2 text-xs">
+                <div className="font-semibold">🔧 {tc.tool}</div>
+                {tc.result && <div className="mt-1">→ {tc.result}</div>}
+              </div>
+            ))}
+          </div>
+        )}
 
-                {/* Content */}
-                <div>{message.isStreaming ? '...' : message.content}</div>
-            </div>
-        </div>
-    );
+        {/* Content */}
+        <div>{message.isStreaming ? "..." : message.content}</div>
+      </div>
+    </div>
+  );
 }
 
 function StreamListener({ url, onEvent, onComplete, onError }: any) {
-    // Wrap error handler to filter out @laravel/stream-react bugs
-    const handleError = (error?: any) => {
-        // The library has a bug where it throws on normal stream closure
-        if (error?.message?.includes('startsWith') || error?.type === 'error') {
-            console.log('Stream closed normally');
-            onComplete();
-        } else {
-            console.error('Stream error:', error);
-            onError();
-        }
-    };
+  // Wrap error handler to filter out @laravel/stream-react bugs
+  const handleError = (error?: any) => {
+    // The library has a bug where it throws on normal stream closure
+    if (error?.message?.includes("startsWith") || error?.type === "error") {
+      console.log("Stream closed normally");
+      onComplete();
+    } else {
+      console.error("Stream error:", error);
+      onError();
+    }
+  };
 
-    useEventStream(url, {
-        eventName: ['action', 'observation', 'complete'],
-        onMessage: onEvent,
-        onComplete,
-        onError: handleError,
-    });
-    return null;
+  useEventStream(url, {
+    eventName: ["action", "observation", "complete"],
+    onMessage: onEvent,
+    onComplete,
+    onError: handleError,
+  });
+  return null;
 }
 ```
 
@@ -661,7 +678,7 @@ Visit `http://localhost:8000/chat`
 ### 4. Try These Examples
 
 - "What is the weather in Tokyo?"
-- "Calculate 25 * 4"
+- "Calculate 25 \* 4"
 - "Search for Laravel AI SDK"
 - "What's the weather in London and Paris?"
 
@@ -724,24 +741,24 @@ The `RemembersConversations` trait:
 
 ```tsx
 function StreamListener({ url, onEvent, onComplete, onError }) {
-    const handleError = (error?: any) => {
-        // Filter out the library's closure bug
-        if (error?.message?.includes('startsWith') || error?.type === 'error') {
-            console.log('Stream closed normally');
-            onComplete(); // Treat as success
-        } else {
-            console.error('Stream error:', error);
-            onError(); // Real error
-        }
-    };
+  const handleError = (error?: any) => {
+    // Filter out the library's closure bug
+    if (error?.message?.includes("startsWith") || error?.type === "error") {
+      console.log("Stream closed normally");
+      onComplete(); // Treat as success
+    } else {
+      console.error("Stream error:", error);
+      onError(); // Real error
+    }
+  };
 
-    useEventStream(url, {
-        eventName: ['action', 'complete'],
-        onMessage: onEvent,
-        onComplete,
-        onError: handleError,
-    });
-    return null;
+  useEventStream(url, {
+    eventName: ["action", "complete"],
+    onMessage: onEvent,
+    onComplete,
+    onError: handleError,
+  });
+  return null;
 }
 ```
 

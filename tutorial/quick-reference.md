@@ -18,18 +18,18 @@ Essential patterns and callback reference for Laragentic agents.
 
 ### Complete Callback Reference
 
-| Callback | Parameters | When It Fires | Use Case |
-|----------|-----------|---------------|----------|
-| `onLoopStart` | `string $prompt` | Before loop begins | Log request, set up tracking |
-| `onIterationStart` | `int $iteration` | Start of each iteration | Track iteration count |
-| `onBeforeThought` | `string $prompt, int $iteration` | Before agent reasons | Show "thinking" indicator |
-| `onAfterThought` | `AgentResponse $response, int $iteration` | After agent reasons | Display reasoning, check tool calls |
-| `onBeforeAction` | `string $tool, array $args, int $iteration` | Before tool execution | Show tool being called |
-| `onAfterAction` | `string $tool, array $args, string $result, int $iteration` | After tool execution | Display tool result |
-| `onObservation` | `string $observation, int $iteration` | After formatting tool result | Show agent's understanding |
-| `onIterationEnd` | `int $iteration` | End of each iteration | Mark iteration complete |
-| `onLoopComplete` | `AgentResponse $response, int $iterations` | Loop finishes successfully | Display final answer |
-| `onMaxIterationsReached` | `?AgentResponse $response, int $iterations` | Max iterations hit | Handle timeout |
+| Callback                 | Parameters                                                  | When It Fires                | Use Case                            |
+| ------------------------ | ----------------------------------------------------------- | ---------------------------- | ----------------------------------- |
+| `onLoopStart`            | `string $prompt`                                            | Before loop begins           | Log request, set up tracking        |
+| `onIterationStart`       | `int $iteration`                                            | Start of each iteration      | Track iteration count               |
+| `onBeforeThought`        | `string $prompt, int $iteration`                            | Before agent reasons         | Show "thinking" indicator           |
+| `onAfterThought`         | `AgentResponse $response, int $iteration`                   | After agent reasons          | Display reasoning, check tool calls |
+| `onBeforeAction`         | `string $tool, array $args, int $iteration`                 | Before tool execution        | Show tool being called              |
+| `onAfterAction`          | `string $tool, array $args, string $result, int $iteration` | After tool execution         | Display tool result                 |
+| `onObservation`          | `string $observation, int $iteration`                       | After formatting tool result | Show agent's understanding          |
+| `onIterationEnd`         | `int $iteration`                                            | End of each iteration        | Mark iteration complete             |
+| `onLoopComplete`         | `AgentResponse $response, int $iterations`                  | Loop finishes successfully   | Display final answer                |
+| `onMaxIterationsReached` | `?AgentResponse $response, int $iterations`                 | Max iterations hit           | Handle timeout                      |
 
 ### Callback Signatures
 
@@ -84,17 +84,17 @@ Essential patterns and callback reference for Laragentic agents.
 
 ## Plan-Execute Loop Callbacks
 
-| Callback | Parameters | When It Fires |
-|----------|-----------|---------------|
-| `onLoopStart` | `string $task` | Before planning begins |
-| `onPlanCreated` | `array $steps` | After initial plan created |
-| `onBeforeStep` | `int $stepNumber, string $description, int $totalSteps` | Before executing a step |
-| `onAfterStep` | `int $stepNumber, string $description, AgentResponse $response, int $totalSteps` | After executing a step |
-| `onReplan` | `array $newSteps, int $replanCount` | When replanning occurs |
-| `onBeforeSynthesis` | `array $stepResults` | Before synthesizing results |
-| `onAfterSynthesis` | `AgentResponse $response` | After synthesis complete |
-| `onLoopComplete` | `AgentResponse $response, int $totalSteps` | Loop finishes |
-| `onMaxStepsReached` | `AgentResponse $response, int $stepsExecuted` | Max steps hit |
+| Callback            | Parameters                                                                       | When It Fires               |
+| ------------------- | -------------------------------------------------------------------------------- | --------------------------- |
+| `onLoopStart`       | `string $task`                                                                   | Before planning begins      |
+| `onPlanCreated`     | `array $steps`                                                                   | After initial plan created  |
+| `onBeforeStep`      | `int $stepNumber, string $description, int $totalSteps`                          | Before executing a step     |
+| `onAfterStep`       | `int $stepNumber, string $description, AgentResponse $response, int $totalSteps` | After executing a step      |
+| `onReplan`          | `array $newSteps, int $replanCount`                                              | When replanning occurs      |
+| `onBeforeSynthesis` | `array $stepResults`                                                             | Before synthesizing results |
+| `onAfterSynthesis`  | `AgentResponse $response`                                                        | After synthesis complete    |
+| `onLoopComplete`    | `AgentResponse $response, int $totalSteps`                                       | Loop finishes               |
+| `onMaxStepsReached` | `AgentResponse $response, int $stepsExecuted`                                    | Max steps hit               |
 
 ## Essential Patterns
 
@@ -280,45 +280,45 @@ class MyAgent implements Agent
 ### Vanilla JavaScript with EventSource
 
 ```javascript
-const source = new EventSource('/stream?message=Hello');
+const source = new EventSource("/stream?message=Hello");
 
-source.addEventListener('action', (e) => {
-    const data = JSON.parse(e.data);
-    console.log('Tool called:', data.tool);
+source.addEventListener("action", (e) => {
+  const data = JSON.parse(e.data);
+  console.log("Tool called:", data.tool);
 });
 
-source.addEventListener('complete', (e) => {
-    const data = JSON.parse(e.data);
-    console.log('Final answer:', data.text);
-    source.close();
+source.addEventListener("complete", (e) => {
+  const data = JSON.parse(e.data);
+  console.log("Final answer:", data.text);
+  source.close();
 });
 
-source.addEventListener('error', () => {
-    console.error('Stream error');
-    source.close();
+source.addEventListener("error", () => {
+  console.error("Stream error");
+  source.close();
 });
 ```
 
 ### React with useEventStream
 
 ```tsx
-import { useEventStream } from '@laravel/stream-react';
+import { useEventStream } from "@laravel/stream-react";
 
 function MyComponent() {
-    const [url, setUrl] = useState('');
-    const [events, setEvents] = useState([]);
+  const [url, setUrl] = useState("");
+  const [events, setEvents] = useState([]);
 
-    useEventStream(url, {
-        eventName: ['action', 'complete'],
-        onMessage: (event) => {
-            setEvents(prev => [...prev, event]);
-        },
-        onComplete: () => {
-            console.log('Stream finished');
-        },
-    });
+  useEventStream(url, {
+    eventName: ["action", "complete"],
+    onMessage: (event) => {
+      setEvents((prev) => [...prev, event]);
+    },
+    onComplete: () => {
+      console.log("Stream finished");
+    },
+  });
 
-    return <div>{/* Render events */}</div>;
+  return <div>{/* Render events */}</div>;
 }
 ```
 
@@ -326,10 +326,10 @@ function MyComponent() {
 
 ```javascript
 // For non-streaming responses
-const response = await fetch('/api/agent', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: 'Hello' }),
+const response = await fetch("/api/agent", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ message: "Hello" }),
 });
 
 const data = await response.json();
@@ -366,7 +366,7 @@ class CachedWeatherTool implements Tool
     public function handle(Request $request): string
     {
         $city = $request['city'];
-        
+
         return Cache::remember("weather.{$city}", 300, function () use ($city) {
             return $this->fetchWeatherFromAPI($city);
         });
@@ -437,22 +437,22 @@ AGENTIC_PLAN_THROW_ON_MAX_STEPS=false
 
 ```tsx
 function StreamListener({ url, onEvent, onComplete, onError }) {
-    const handleError = (error?: any) => {
-        // Known library bug on stream close
-        if (error?.message?.includes('startsWith') || error?.type === 'error') {
-            onComplete(); // Treat as success
-        } else {
-            onError(); // Real error
-        }
-    };
+  const handleError = (error?: any) => {
+    // Known library bug on stream close
+    if (error?.message?.includes("startsWith") || error?.type === "error") {
+      onComplete(); // Treat as success
+    } else {
+      onError(); // Real error
+    }
+  };
 
-    useEventStream(url, {
-        eventName: ['action', 'complete'],
-        onMessage: onEvent,
-        onComplete,
-        onError: handleError,
-    });
-    return null;
+  useEventStream(url, {
+    eventName: ["action", "complete"],
+    onMessage: onEvent,
+    onComplete,
+    onError: handleError,
+  });
+  return null;
 }
 ```
 
@@ -500,7 +500,7 @@ public function instructions(): string
 Route::get('/stream', function () {
     ini_set('output_buffering', 'off');
     ini_set('zlib.output_compression', 'off');
-    
+
     return response()->eventStream(/* ... */);
 });
 ```
@@ -536,6 +536,7 @@ $agent->maxIterations(20); // Increase limit
 1. **Limit tool calls:** Each tool call is an API request. Design tools to return comprehensive information in one call.
 
 2. **Cache tool results:** Use Laravel's cache for expensive operations:
+
    ```php
    Cache::remember("tool.{$cacheKey}", 300, fn() => $this->expensiveOperation());
    ```

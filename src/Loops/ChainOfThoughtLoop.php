@@ -1,0 +1,575 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Laragentic\Loops;
+
+use Closure;
+use Laragentic\Concerns\HasCallbacks;
+use Laragentic\Exceptions\MaxIterationsExceededException;
+use Laravel\Ai\Contracts\Tool;
+use Laravel\Ai\Responses\AgentResponse;
+use Laravel\Ai\Tools\Request;
+
+/**
+ * Adds a Chain-of-Thought (CoT) reasoning loop to any Laravel AI SDK agent.
+ *
+ * The CoT loop implements iterative self-reflection reasoning:
+ *
+ *     User Problem
+ *       ↓
+ *     [REASONING ITERATION 1]
+ *       ├─ Step-by-step analysis of problem
+ *       ├─ Identify what's known and unknown
+ *       ├─ Call tools if information needed
+ *       └─ Self-evaluate: "Do I understand enough to solve this?"
+ *       ↓
+ *     Confident? → No  → [REASONING ITERATION 2]
+ *                → Yes → [FINAL ANSWER]
+ *
+ * The agent continues reasoning until it expresses confidence in its
+ * understanding or reaches the maximum iteration limit.
+ *
+ * Usage:
+ *
+ *     class MathAgent implements Agent, HasTools
+ *     {
+ *         use Promptable, ChainOfThoughtLoop;
+ *
+ *         public function instructions(): string { ... }
+ *         public function tools(): iterable { ... }
+ *     }
+ *
+ *     $result = (new MathAgent)
+ *         ->maxReasoningIterations(10)
+ *         ->chainOfThought('Complex problem requiring deep analysis...');
+ */
+trait ChainOfThoughtLoop
+{
+    use HasCallbacks;
+
+    /**
+     * The maximum number of reasoning iterations for this agent instance.
+     */
+    protected ?int $maxCoTIterations = null;
+
+    // ─── CoT Callback Registration ──────────────────────────────────
+
+    /**
+     * Register a callback invoked when the max reasoning iteration limit is reached.
+     *
+     * Receives: (AgentResponse $response, int $totalIterations)
+     */
+    public function onMaxIterationsReached(Closure $callback): static
+    {
+        $this->loopCallbacks['maxIterationsReached'][] = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Register a callback for the start of each reasoning iteration.
+     *
+     * Receives: (int $iteration)
+     */
+    public function onIterationStart(Closure $callback): static
+    {
+        $this->loopCallbacks['iterationStart'][] = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Register a callback for the end of each reasoning iteration.
+     *
+     * Receives: (int $iteration, AgentResponse $response)
+     */
+    public function onIterationEnd(Closure $callback): static
+    {
+        $this->loopCallbacks['iterationEnd'][] = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Register a callback invoked before the LLM reasons (before prompt).
+     *
+     * Receives: (string $prompt, int $iteration)
+     */
+    public function onBeforeReasoning(Closure $callback): static
+    {
+        $this->loopCallbacks['beforeReasoning'][] = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Register a callback invoked after the LLM responds (after reasoning).
+     *
+     * Receives: (AgentResponse $response, int $iteration)
+     */
+    public function onAfterReasoning(Closure $callback): static
+    {
+        $this->loopCallbacks['afterReasoning'][] = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Register a callback invoked before executing a tool.
+     *
+     * Receives: (string $toolName, array $arguments, int $iteration)
+     */
+    public function onBeforeAction(Closure $callback): static
+    {
+        $this->loopCallbacks['beforeAction'][] = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Register a callback invoked after a tool returns its result.
+     *
+     * Receives: (string $toolName, array $arguments, string $result, int $iteration)
+     */
+    public function onAfterAction(Closure $callback): static
+    {
+        $this->loopCallbacks['afterAction'][] = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Register a callback invoked when building a reflection prompt.
+     *
+     * Receives: (string $reflectionPrompt, int $iteration)
+     */
+    public function onReflection(Closure $callback): static
+    {
+        $this->loopCallbacks['reflection'][] = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Set the maximum number of reasoning iterations for the CoT loop.
+     */
+    public function maxReasoningIterations(int $max): static
+    {
+        $this->maxCoTIterations = $max;
+
+        return $this;
+    }
+
+    /**
+     * Execute the Chain-of-Thought reasoning loop.
+     *
+     * Each iteration follows: Reasoning → (optional Tool Calls) → Self-Evaluation.
+     * The loop continues until the LLM expresses confidence or max iterations reached.
+     *
+     * @throws MaxIterationsExceededException
+     */
+    public function chainOfThought(
+        string $prompt,
+        ?string $provider = null,
+        ?string $model = null,
+        ?int $timeout = null,
+    ): CoTResult {
+        $maxIterations = $this->resolveMaxReasoningIterations();
+        $iteration = 0;
+        $steps = [];
+        $response = null;
+        $currentPrompt = $this->buildInitialPrompt($prompt);
+
+        $this->fireCallbacks('loopStart', $prompt);
+
+        while ($iteration < $maxIterations) {
+            $iteration++;
+
+            $this->fireCallbacks('iterationStart', $iteration);
+
+            // ── REASONING ───────────────────────────────────────────
+            // The LLM analyzes the problem step-by-step, identifies gaps,
+            // and evaluates whether it has sufficient understanding.
+
+            $this->fireCallbacks('beforeReasoning', $currentPrompt, $iteration);
+
+            $response = $this->prompt(
+                prompt: $currentPrompt,
+                provider: $provider,
+                model: $model,
+                timeout: $timeout,
+            );
+
+            $this->fireCallbacks('afterReasoning', $response, $iteration);
+
+            // Check if the agent is confident in its understanding
+            $isConfident = $this->isReasoningComplete($response);
+
+            if ($isConfident) {
+                // Agent has reached confidence → final answer
+                $steps[] = new CoTStep(
+                    iteration: $iteration,
+                    response: $response,
+                    confident: true,
+                );
+
+                $this->fireCallbacks('iterationEnd', $iteration, $response);
+                $this->fireCallbacks('loopComplete', $response, $iteration);
+
+                return new CoTResult(
+                    response: $response,
+                    reasoningIterations: $iteration,
+                    steps: $steps,
+                );
+            }
+
+            // ── TOOL CALLS ──────────────────────────────────────────
+            // Execute any tools the LLM requested to gather information.
+
+            $toolCallRecords = [];
+            $observation = null;
+
+            if ($response->toolCalls->isNotEmpty()) {
+                $toolCallRecords = $this->executeLoopToolCalls($response, $iteration);
+                $observation = $this->formatObservation($toolCallRecords);
+            }
+
+            $steps[] = new CoTStep(
+                iteration: $iteration,
+                response: $response,
+                toolCalls: $toolCallRecords,
+                observation: $observation,
+                confident: false,
+            );
+
+            // ── REFLECTION ──────────────────────────────────────────
+            // Build a prompt for the next iteration that includes:
+            // - Previous reasoning context (maintained by conversation)
+            // - Tool observations (if any)
+            // - Guidance to reflect and evaluate understanding
+
+            $currentPrompt = $this->buildReflectionPrompt($observation);
+
+            $this->fireCallbacks('reflection', $currentPrompt, $iteration);
+            $this->fireCallbacks('iterationEnd', $iteration, $response);
+        }
+
+        // Max iterations reached without confidence
+        $this->fireCallbacks('maxIterationsReached', $response, $iteration);
+
+        $result = new CoTResult(
+            response: $response,
+            reasoningIterations: $iteration,
+            steps: $steps,
+            reachedMaxIterations: true,
+        );
+
+        if (config('agentic.chain_of_thought.throw_on_max_iterations', false)) {
+            throw new MaxIterationsExceededException($maxIterations, $response);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Build the initial reasoning prompt that includes CoT guidance.
+     *
+     * This enhances the user's problem with reasoning instructions.
+     */
+    protected function buildInitialPrompt(string $userProblem): string
+    {
+        $prompt = $userProblem . "\n\n";
+        $prompt .= CoTPrompts::reasoningGuidance() . "\n\n";
+
+        if (method_exists($this, 'tools') && ! empty(iterator_to_array($this->tools()))) {
+            $prompt .= CoTPrompts::toolGuidance() . "\n\n";
+        }
+
+        $prompt .= CoTPrompts::confidenceEvaluation();
+
+        return $prompt;
+    }
+
+    /**
+     * Build a reflection prompt for continuing reasoning after an iteration.
+     *
+     * This prompt guides the LLM to reflect on its current understanding
+     * and decide whether to continue reasoning or provide a final answer.
+     */
+    protected function buildReflectionPrompt(?string $observation): string
+    {
+        return CoTPrompts::reflectionPrompt($observation);
+    }
+
+    /**
+     * Determine if the agent's reasoning is complete (confident in understanding).
+     *
+     * The loop terminates when the agent explicitly expresses confidence
+     * in its understanding or provides a final answer.
+     *
+     * Override this method to implement custom confidence detection logic.
+     */
+    protected function isReasoningComplete(AgentResponse $response): bool
+    {
+        $text = strtolower($response->text);
+
+        // Check for explicit confidence markers
+        foreach (CoTPrompts::confidenceMarkers() as $marker) {
+            if (str_contains($text, $marker)) {
+                return true;
+            }
+        }
+
+        // If response has no tool calls and is substantial, likely final answer
+        if ($response->toolCalls->isEmpty() && strlen($text) > 100) {
+            // But not if it expresses uncertainty
+            foreach (CoTPrompts::uncertaintyMarkers() as $marker) {
+                if (str_contains($text, $marker)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Format tool call results into an observation string.
+     *
+     * The observation is fed back to the LLM in the next iteration,
+     * allowing it to incorporate the information into its reasoning.
+     *
+     * Override this method to customize how observations are presented.
+     *
+     * @param  array<int, array{tool: string, arguments: array<string, mixed>, result: string}>  $toolCallRecords
+     */
+    protected function formatObservation(array $toolCallRecords): string
+    {
+        $parts = [];
+
+        foreach ($toolCallRecords as $record) {
+            $parts[] = "[{$record['tool']}]: {$record['result']}";
+        }
+
+        return implode("\n", $parts);
+    }
+
+    /**
+     * Execute all tool calls from the LLM response, firing lifecycle
+     * callbacks before and after each call.
+     *
+     * @return array<int, array{tool: string, arguments: array<string, mixed>, result: string}>
+     */
+    protected function executeLoopToolCalls(AgentResponse $response, int $iteration): array
+    {
+        $tools = $this->resolveToolMap();
+        $records = [];
+
+        foreach ($response->toolCalls as $toolCall) {
+            $toolName = $toolCall->name;
+            $arguments = $toolCall->arguments;
+
+            $this->fireCallbacks('beforeAction', $toolName, $arguments, $iteration);
+
+            $result = $this->executeLoopTool($tools, $toolName, $arguments);
+
+            $this->fireCallbacks('afterAction', $toolName, $arguments, $result, $iteration);
+
+            $records[] = [
+                'tool' => $toolName,
+                'arguments' => $arguments,
+                'result' => $result,
+            ];
+        }
+
+        return $records;
+    }
+
+    /**
+     * Execute a single tool by name with the given arguments.
+     *
+     * Tools receive a Laravel\Ai\Tools\Request instance, matching the
+     * signature defined by the Laravel\Ai\Contracts\Tool interface.
+     */
+    protected function executeLoopTool(array $tools, string $toolName, array $arguments): string
+    {
+        $tool = $tools[$toolName] ?? null;
+
+        if ($tool === null) {
+            return "Error: Tool '{$toolName}' not found.";
+        }
+
+        try {
+            return (string) $tool->handle(new Request($arguments));
+        } catch (\Throwable $e) {
+            return "Error executing tool '{$toolName}': {$e->getMessage()}";
+        }
+    }
+
+    /**
+     * Build a name-keyed map of available tools from the agent.
+     *
+     * Follows the Laravel AI SDK convention: uses $tool->name() if the
+     * method exists, otherwise falls back to the class basename.
+     *
+     * @return array<string, Tool>
+     */
+    protected function resolveToolMap(): array
+    {
+        $tools = [];
+
+        if (method_exists($this, 'tools')) {
+            foreach ($this->tools() as $tool) {
+                if ($tool instanceof Tool) {
+                    $name = method_exists($tool, 'name')
+                        ? call_user_func([$tool, 'name'])
+                        : class_basename($tool);
+
+                    $tools[$name] = $tool;
+                }
+            }
+        }
+
+        return $tools;
+    }
+
+    /**
+     * Execute the Chain-of-Thought loop as a Generator for streaming contexts.
+     *
+     * This method mirrors chainOfThought() but yields values from callbacks,
+     * making it compatible with Laravel's response()->eventStream().
+     *
+     * Usage with eventStream():
+     *
+     *     return response()->eventStream(function () use ($agent) {
+     *         yield from $agent->chainOfThoughtStream('Problem...');
+     *     });
+     *
+     * The return value of the Generator is the CoTResult, accessible
+     * via Generator::getReturn() if needed.
+     *
+     * @return \Generator<int, mixed, mixed, CoTResult>
+     *
+     * @throws MaxIterationsExceededException
+     */
+    public function chainOfThoughtStream(
+        string $prompt,
+        ?string $provider = null,
+        ?string $model = null,
+        ?int $timeout = null,
+    ): \Generator {
+        $maxIterations = $this->resolveMaxReasoningIterations();
+        $iteration = 0;
+        $steps = [];
+        $response = null;
+        $currentPrompt = $this->buildInitialPrompt($prompt);
+
+        yield from $this->fireStreamCallbacks('loopStart', $prompt);
+
+        while ($iteration < $maxIterations) {
+            $iteration++;
+
+            yield from $this->fireStreamCallbacks('iterationStart', $iteration);
+
+            // ── REASONING ───────────────────────────────────────────
+            yield from $this->fireStreamCallbacks('beforeReasoning', $currentPrompt, $iteration);
+
+            $response = $this->prompt(
+                prompt: $currentPrompt,
+                provider: $provider,
+                model: $model,
+                timeout: $timeout,
+            );
+
+            yield from $this->fireStreamCallbacks('afterReasoning', $response, $iteration);
+
+            $isConfident = $this->isReasoningComplete($response);
+
+            if ($isConfident) {
+                $steps[] = new CoTStep(
+                    iteration: $iteration,
+                    response: $response,
+                    confident: true,
+                );
+
+                yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
+                yield from $this->fireStreamCallbacks('loopComplete', $response, $iteration);
+
+                return new CoTResult(
+                    response: $response,
+                    reasoningIterations: $iteration,
+                    steps: $steps,
+                );
+            }
+
+            // ── TOOL CALLS ──────────────────────────────────────────
+            $toolCallRecords = [];
+            $observation = null;
+
+            if ($response->toolCalls->isNotEmpty()) {
+                $tools = $this->resolveToolMap();
+
+                foreach ($response->toolCalls as $toolCall) {
+                    $toolName = $toolCall->name;
+                    $arguments = $toolCall->arguments;
+
+                    yield from $this->fireStreamCallbacks('beforeAction', $toolName, $arguments, $iteration);
+
+                    $result = $this->executeLoopTool($tools, $toolName, $arguments);
+
+                    yield from $this->fireStreamCallbacks('afterAction', $toolName, $arguments, $result, $iteration);
+
+                    $toolCallRecords[] = [
+                        'tool' => $toolName,
+                        'arguments' => $arguments,
+                        'result' => $result,
+                    ];
+                }
+
+                $observation = $this->formatObservation($toolCallRecords);
+            }
+
+            $steps[] = new CoTStep(
+                iteration: $iteration,
+                response: $response,
+                toolCalls: $toolCallRecords,
+                observation: $observation,
+                confident: false,
+            );
+
+            // ── REFLECTION ──────────────────────────────────────────
+            $currentPrompt = $this->buildReflectionPrompt($observation);
+
+            yield from $this->fireStreamCallbacks('reflection', $currentPrompt, $iteration);
+            yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
+        }
+
+        // Max iterations reached
+        yield from $this->fireStreamCallbacks('maxIterationsReached', $response, $iteration);
+
+        $result = new CoTResult(
+            response: $response,
+            reasoningIterations: $iteration,
+            steps: $steps,
+            reachedMaxIterations: true,
+        );
+
+        if (config('agentic.chain_of_thought.throw_on_max_iterations', false)) {
+            throw new MaxIterationsExceededException($maxIterations, $response);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Resolve the maximum reasoning iteration count from the instance or config.
+     */
+    protected function resolveMaxReasoningIterations(): int
+    {
+        return $this->maxCoTIterations
+            ?? (int) config('agentic.chain_of_thought.max_reasoning_iterations', 5);
+    }
+}
