@@ -1,35 +1,163 @@
-# Streaming ReAct Loop Progress
+# Streaming ReAct Loop
 
-This tutorial shows how to stream ReAct loop progress to users in real-time using Laravel's [Event Streams (SSE)](https://laravel.com/docs/12.x/responses#event-streams-sse) with the callbacks from the `ReActLoop` trait.
+Deep dive into the ReAct (Reasoning + Acting) loop pattern with real-time streaming.
 
-## The Problem
+![ReAct Loop in Action](images/react-loop.png)
 
-Agentic loops can take several seconds or even minutes to complete. Users need real-time feedback about what the agent is doing:
+*The agent autonomously searches, calculates, and synthesizes the answer — watch each iteration in real-time.*
 
-- "Thinking about the problem..."
-- "Calling weather API..."
-- "Analyzing results..."
+## What is ReAct?
 
-Without streaming, users see nothing until the entire loop completes.
+ReAct is an agentic AI pattern that combines **reasoning** (thinking about what to do) and **acting** (using tools to get information) in an iterative loop:
 
-## The Solution
+```mermaid
+graph TD
+    Start[User Request] --> Think[Think: What do I need?]
+    Think --> Decide{Need Tools?}
+    Decide -->|Yes| Act[Act: Call Tools]
+    Act --> Observe[Observe: Process Results]
+    Observe --> Think
+    Decide -->|No| Answer[Provide Final Answer]
+    Answer --> End[Complete]
+```
 
-Laravel's `response()->eventStream()` sends Server-Sent Events (SSE) to the browser. By yielding `StreamedEvent` instances from the loop callbacks, we can stream structured progress updates as the agent works.
+### The Loop Cycle
 
-The `ReActLoop` trait provides `reactLoopStream()` — a Generator method designed for streaming contexts. Unlike `reactLoop()`, it propagates `yield` values from your callbacks to the parent Generator, making them compatible with `eventStream()`.
+1. **THINK**: Agent reasons about the request
+2. **ACT**: Agent calls one or more tools
+3. **OBSERVE**: Agent processes tool results
+4. **Repeat** until the agent has enough information to answer
 
-## Basic Example
+This autonomous loop allows agents to make multiple tool calls, gather information iteratively, and provide comprehensive answers without explicit step-by-step instructions.
 
-Here's a minimal example that streams ReAct loop progress as SSE:
+## Basic ReAct Agent (Non-Streaming)
+
+Let's start simple — a ReAct agent without streaming:
+
+### Step 1: Create the Agent
 
 ```php
-use App\Agents\ExampleAgent;
-use Illuminate\Http\StreamedEvent;
-use Illuminate\Support\Facades\Route;
+<?php
 
-Route::get('/chat', function () {
-    $agent = new ExampleAgent;
+namespace App\Agents;
+
+use App\Tools\WeatherTool;
+use App\Tools\CalculatorTool;
+use Laravel\Ai\Contracts\Agent;
+use Laravel\Ai\Contracts\HasTools;
+use Laravel\Ai\Promptable;
+use Laragentic\Loops\ReActLoop;
+
+class SimpleReActAgent implements Agent, HasTools
+{
+    use Promptable, ReActLoop;
+
+    public function instructions(): string
+    {
+        return <<<'INSTRUCTIONS'
+        You are a helpful assistant. When asked a question:
+        1. Think about what information you need
+        2. Use the available tools to get that information
+        3. Provide a clear answer based on the tool results
+        
+        Don't guess — use the tools!
+        INSTRUCTIONS;
+    }
+
+    public function tools(): iterable
+    {
+        return [
+            new WeatherTool,
+            new CalculatorTool,
+        ];
+    }
+}
+```
+
+### Step 2: Use the Agent
+
+```php
+use App\Agents\SimpleReActAgent;
+
+Route::get('/simple', function () {
+    $agent = new SimpleReActAgent;
     
+    $result = $agent->reactLoop('What is the weather in Tokyo?');
+    
+    return response()->json([
+        'answer' => $result->text,
+        'iterations' => $result->iterations,
+        'tool_calls' => $result->allToolCalls(),
+    ]);
+});
+```
+
+**What happens:**
+
+1. Agent receives "What is the weather in Tokyo?"
+2. Agent thinks: "I need to use the weather tool"
+3. Agent calls `get_weather` with `city: Tokyo`
+4. Agent observes the result
+5. Agent provides final answer based on the weather data
+
+All of this happens **automatically** inside `reactLoop()`.
+
+## Adding Streaming
+
+Now let's add real-time streaming so users see progress as it happens.
+
+### The Streaming Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server
+    participant Agent
+    participant Tools
+
+    Client->>Server: GET /stream?message=...
+    Server->>Agent: reactLoopStream(message)
+    
+    loop Each Iteration
+        Agent->>Server: onBeforeThought
+        Server-->>Client: SSE: thinking
+        
+        Agent->>Agent: Think (LLM call)
+        
+        Agent->>Server: onAfterThought
+        Server-->>Client: SSE: thought
+        
+        alt Has Tool Calls
+            loop Each Tool
+                Agent->>Server: onBeforeAction
+                Server-->>Client: SSE: action (start)
+                
+                Agent->>Tools: Execute tool
+                Tools-->>Agent: Result
+                
+                Agent->>Server: onAfterAction
+                Server-->>Client: SSE: action (complete)
+            end
+            
+            Agent->>Server: onObservation
+            Server-->>Client: SSE: observation
+        end
+    end
+    
+    Agent->>Server: onLoopComplete
+    Server-->>Client: SSE: complete
+    Server-->>Client: SSE: </stream>
+```
+
+### Step 3: Create Streaming Route
+
+```php
+use App\Agents\SimpleReActAgent;
+use Illuminate\Http\StreamedEvent;
+
+Route::get('/stream', function () {
+    $agent = new SimpleReActAgent;
+
     return response()->eventStream(function () use ($agent) {
         $agent
             ->onBeforeThought(function (string $prompt, int $iteration) {
@@ -43,6 +171,7 @@ Route::get('/chat', function () {
                     event: 'action',
                     data: [
                         'tool' => $tool,
+                        'args' => $args,
                         'result' => $result,
                         'iteration' => $iteration,
                     ],
@@ -51,7 +180,10 @@ Route::get('/chat', function () {
             ->onObservation(function (string $observation, int $iteration) {
                 yield new StreamedEvent(
                     event: 'observation',
-                    data: ['iteration' => $iteration],
+                    data: [
+                        'text' => $observation,
+                        'iteration' => $iteration,
+                    ],
                 );
             })
             ->onLoopComplete(function ($response, int $iterations) {
@@ -63,39 +195,157 @@ Route::get('/chat', function () {
                     ],
                 );
             });
-        
-        // Use the streaming variant — yields propagate from callbacks
-        yield from $agent->reactLoopStream(request()->input('message', 'Hello!'));
+
+        // Start the streaming loop
+        yield from $agent->reactLoopStream(request('message', 'Hello!'));
     });
 });
 ```
 
-> **Why `reactLoopStream()`?** PHP generators are scoped to their closure. A `yield` inside a callback creates a Generator for *that callback only* — it doesn't propagate to the parent `eventStream()` closure. `reactLoopStream()` uses `yield from` internally to forward those values.
+**Key points:**
 
-## Advanced Example: Full Lifecycle Events
+- Each callback `yield`s a `StreamedEvent`
+- Events are sent to the client in real-time via SSE
+- Use `yield from` to propagate the generator through the loop
 
-Use all available callbacks for detailed progress tracking:
+## Frontend Integration
+
+### React Component
+
+```tsx
+import { useEventStream } from '@laravel/stream-react';
+import { useState, useCallback } from 'react';
+
+export default function ReActDemo() {
+    const [message, setMessage] = useState('');
+    const [streamUrl, setStreamUrl] = useState('');
+    const [iterations, setIterations] = useState([]);
+    const [finalAnswer, setFinalAnswer] = useState('');
+
+    const handleEvent = useCallback((event: MessageEvent) => {
+        const data = JSON.parse(event.data);
+
+        if (event.type === 'thinking') {
+            setIterations(prev => [...prev, { 
+                id: data.iteration, 
+                status: 'thinking' 
+            }]);
+        } else if (event.type === 'action') {
+            setIterations(prev => prev.map((iter, idx) => 
+                idx === prev.length - 1 
+                    ? { ...iter, action: data } 
+                    : iter
+            ));
+        } else if (event.type === 'observation') {
+            setIterations(prev => prev.map((iter, idx) => 
+                idx === prev.length - 1 
+                    ? { ...iter, observation: data.text } 
+                    : iter
+            ));
+        } else if (event.type === 'complete') {
+            setFinalAnswer(data.text);
+        }
+    }, []);
+
+    const handleStart = () => {
+        setIterations([]);
+        setFinalAnswer('');
+        setStreamUrl(`/stream?message=${encodeURIComponent(message)}`);
+    };
+
+    return (
+        <div>
+            {streamUrl && (
+                <StreamListener 
+                    url={streamUrl} 
+                    onEvent={handleEvent} 
+                />
+            )}
+
+            <input 
+                value={message}
+                onChange={e => setMessage(e.target.value)}
+                placeholder="Ask a question..."
+            />
+            <button onClick={handleStart}>Ask</button>
+
+            {/* Display iterations */}
+            {iterations.map(iter => (
+                <div key={iter.id}>
+                    <h3>Iteration {iter.id}</h3>
+                    {iter.status === 'thinking' && <p>🤔 Thinking...</p>}
+                    {iter.action && (
+                        <div>
+                            <strong>Tool:</strong> {iter.action.tool}
+                            <br />
+                            <strong>Result:</strong> {iter.action.result}
+                        </div>
+                    )}
+                    {iter.observation && <p>👁️ {iter.observation}</p>}
+                </div>
+            ))}
+
+            {/* Final answer */}
+            {finalAnswer && (
+                <div className="final-answer">
+                    <h2>Answer:</h2>
+                    <p>{finalAnswer}</p>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function StreamListener({ url, onEvent }) {
+    // Wrap error handler to filter out @laravel/stream-react bugs
+    const handleError = (error?: any) => {
+        if (error?.message?.includes('startsWith') || error?.type === 'error') {
+            console.log('Stream closed normally');
+        } else {
+            console.error('Stream error:', error);
+        }
+    };
+
+    useEventStream(url, {
+        eventName: ['thinking', 'action', 'observation', 'complete'],
+        onMessage: onEvent,
+        onError: handleError,
+    });
+    return null;
+}
+```
+
+## All Lifecycle Callbacks
+
+For maximum visibility, use all available callbacks:
 
 ```php
-use App\Agents\ExampleAgent;
-use Illuminate\Http\StreamedEvent;
-use Illuminate\Support\Facades\Route;
+Route::get('/stream-detailed', function () {
+    $agent = new SimpleReActAgent;
 
-Route::get('/chat/detailed', function () {
-    $agent = new ExampleAgent;
-    
     return response()->eventStream(function () use ($agent) {
         $agent
+            // ─── Loop Level ────────────────────────────────────
+            ->onLoopStart(function (string $prompt) {
+                yield new StreamedEvent(
+                    event: 'start',
+                    data: ['message' => $prompt],
+                );
+            })
+            
+            // ─── Iteration Level ───────────────────────────────
             ->onIterationStart(function (int $iteration) {
                 yield new StreamedEvent(
                     event: 'iteration',
                     data: ['number' => $iteration, 'status' => 'started'],
                 );
             })
+            
+            // ─── Thought Phase ─────────────────────────────────
             ->onBeforeThought(function (string $prompt, int $iteration) {
                 yield new StreamedEvent(
-                    event: 'thought',
-                    data: ['iteration' => $iteration, 'stage' => 'thinking'],
+                    event: 'thinking',
+                    data: ['iteration' => $iteration],
                 );
             })
             ->onAfterThought(function ($response, int $iteration) {
@@ -103,20 +353,22 @@ Route::get('/chat/detailed', function () {
                     event: 'thought',
                     data: [
                         'iteration' => $iteration,
-                        'stage' => 'complete',
                         'text' => $response->text,
                         'hasToolCalls' => $response->toolCalls->isNotEmpty(),
+                        'toolCount' => $response->toolCalls->count(),
                     ],
                 );
             })
+            
+            // ─── Action Phase ──────────────────────────────────
             ->onBeforeAction(function (string $tool, array $args, int $iteration) {
                 yield new StreamedEvent(
                     event: 'action',
                     data: [
-                        'iteration' => $iteration,
                         'tool' => $tool,
                         'args' => $args,
-                        'stage' => 'started',
+                        'iteration' => $iteration,
+                        'stage' => 'start',
                     ],
                 );
             })
@@ -124,294 +376,337 @@ Route::get('/chat/detailed', function () {
                 yield new StreamedEvent(
                     event: 'action',
                     data: [
-                        'iteration' => $iteration,
                         'tool' => $tool,
                         'result' => $result,
+                        'iteration' => $iteration,
                         'stage' => 'complete',
                     ],
                 );
             })
+            
+            // ─── Observation Phase ─────────────────────────────
             ->onObservation(function (string $observation, int $iteration) {
                 yield new StreamedEvent(
                     event: 'observation',
-                    data: ['iteration' => $iteration, 'text' => $observation],
+                    data: [
+                        'text' => $observation,
+                        'iteration' => $iteration,
+                    ],
                 );
             })
+            
+            // ─── Iteration End ─────────────────────────────────
+            ->onIterationEnd(function (int $iteration) {
+                yield new StreamedEvent(
+                    event: 'iteration',
+                    data: ['number' => $iteration, 'status' => 'completed'],
+                );
+            })
+            
+            // ─── Loop Complete ─────────────────────────────────
             ->onLoopComplete(function ($response, int $iterations) {
                 yield new StreamedEvent(
                     event: 'complete',
                     data: [
-                        'iterations' => $iterations,
                         'text' => $response->text,
-                        'conversationId' => $response->conversationId,
+                        'iterations' => $iterations,
+                        'conversationId' => $response->conversationId ?? null,
                     ],
                 );
             })
+            
+            // ─── Error Handling ────────────────────────────────
             ->onMaxIterationsReached(function ($response, int $iterations) {
                 yield new StreamedEvent(
                     event: 'max_iterations',
                     data: [
                         'iterations' => $iterations,
-                        'text' => $response->text,
+                        'text' => $response?->text ?? 'Max iterations reached',
                     ],
                 );
             });
-        
-        // Use the streaming variant — yields propagate from callbacks
-        yield from $agent->reactLoopStream(request()->input('message', 'Hello!'));
+
+        yield from $agent->reactLoopStream(request('message'));
     });
 });
 ```
 
-## Consuming the Event Stream
+## Advanced Patterns
 
-### JavaScript (EventSource)
+### 1. Custom Observation Formatting
 
-```javascript
-const source = new EventSource('/chat?message=What+is+the+weather+in+Tokyo');
+By default, tool results are formatted like:
 
-source.addEventListener('thinking', (e) => {
-    const data = JSON.parse(e.data);
-    console.log(`🤔 Iteration ${data.iteration}: Thinking...`);
-});
-
-source.addEventListener('action', (e) => {
-    const data = JSON.parse(e.data);
-    if (data.stage === 'started') {
-        console.log(`🔧 Calling tool: ${data.tool}`);
-    } else {
-        console.log(`📊 Tool result: ${data.result}`);
-    }
-});
-
-source.addEventListener('observation', (e) => {
-    const data = JSON.parse(e.data);
-    console.log('👁️ Observation:', data.text);
-});
-
-source.addEventListener('complete', (e) => {
-    const data = JSON.parse(e.data);
-    console.log('✅ Complete!', data.text);
-    source.close();
-});
-
-// Laravel sends </stream> as an "update" event when the generator finishes
-source.addEventListener('update', (e) => {
-    if (e.data === '</stream>') {
-        source.close();
-    }
-});
+```
+Tool get_weather returned: Weather in Tokyo: Sunny, 22°C
+Tool calculate returned: The result of 2+2 is 4
 ```
 
-### React with `@laravel/stream-react`
-
-```bash
-npm install @laravel/stream-react
-```
-
-```tsx
-import { useEventStream } from '@laravel/stream-react';
-
-function ChatAgent() {
-    const { message } = useEventStream('/chat?message=Hello', {
-        onMessage: (msg) => console.log('Received:', msg),
-        onComplete: () => console.log('Stream complete'),
-    });
-
-    return <div>{message}</div>;
-}
-```
-
-For more control over individual event types:
-
-```tsx
-import { useEventStream } from '@laravel/stream-react';
-
-function ChatAgentDetailed() {
-    const { message } = useEventStream('/chat/detailed?message=Hello', {
-        eventName: 'complete', // Only concatenate 'complete' events into message
-        onMessage: (msg) => {
-            // Handle each message as it arrives
-            console.log('New message:', msg);
-        },
-    });
-
-    return <div>{message}</div>;
-}
-```
-
-### Vue with `@laravel/stream-vue`
-
-```bash
-npm install @laravel/stream-vue
-```
-
-```vue
-<script setup lang="ts">
-import { useEventStream } from '@laravel/stream-vue';
-
-const { message } = useEventStream('/chat?message=Hello');
-</script>
-
-<template>
-    <div>{{ message }}</div>
-</template>
-```
-
-## Real-World Example: Chat Interface
-
-Here's a complete example with proper error handling and user feedback:
+You can customize this:
 
 ```php
-use App\Agents\ExampleAgent;
-use Illuminate\Http\StreamedEvent;
-use Illuminate\Support\Facades\Route;
+class MyAgent implements Agent
+{
+    use Promptable, ReActLoop;
 
-Route::get('/agent/chat', function () {
-    $message = request()->input('message');
-    $conversationId = request()->input('conversation_id');
-    
-    if (empty($message)) {
-        return response()->json(['error' => 'Message required'], 400);
+    protected function formatObservation(Collection $toolCalls): string
+    {
+        if ($toolCalls->count() === 1) {
+            $call = $toolCalls->first();
+            return "Result: {$call->result}";
+        }
+
+        $formatted = $toolCalls->map(function ($call) {
+            return "- {$call->name}: {$call->result}";
+        })->implode("\n");
+
+        return "Multiple results:\n{$formatted}";
     }
-    
-    $agent = new ExampleAgent;
-    
-    if ($conversationId) {
-        $agent->forConversation($conversationId);
+}
+```
+
+### 2. Early Termination
+
+Stop the loop early based on custom logic:
+
+```php
+class MyAgent implements Agent
+{
+    use Promptable, ReActLoop;
+
+    protected function loopShouldTerminate(AgentResponse $response): bool
+    {
+        // Stop if agent explicitly says "FINAL ANSWER:"
+        if (str_contains($response->text, 'FINAL ANSWER:')) {
+            return true;
+        }
+
+        // Stop if no tool calls (default behavior)
+        if ($response->toolCalls->isEmpty()) {
+            return true;
+        }
+
+        return false;
     }
-    
-    return response()->eventStream(function () use ($agent, $message) {
-        try {
-            $agent
-                ->maxIterations(10)
-                ->onIterationStart(function (int $iteration) {
-                    yield new StreamedEvent(
-                        event: 'progress',
-                        data: ['type' => 'iteration_start', 'iteration' => $iteration],
-                    );
-                })
-                ->onBeforeThought(function (string $prompt, int $iteration) {
-                    yield new StreamedEvent(
-                        event: 'progress',
-                        data: ['type' => 'thinking', 'iteration' => $iteration],
-                    );
-                })
-                ->onAfterAction(function (string $tool, array $args, string $result, int $iteration) {
-                    yield new StreamedEvent(
-                        event: 'progress',
-                        data: [
-                            'type' => 'tool_result',
-                            'tool' => $tool,
-                            'iteration' => $iteration,
-                        ],
-                    );
-                })
-                ->onLoopComplete(function ($response, int $iterations) {
-                    yield new StreamedEvent(
-                        event: 'complete',
-                        data: [
-                            'iterations' => $iterations,
-                            'text' => $response->text,
-                            'conversationId' => $response->conversationId,
-                        ],
-                    );
-                });
-            
-            yield from $agent->reactLoopStream($message);
-            
-        } catch (\Throwable $e) {
+}
+```
+
+### 3. Progress Broadcasting
+
+Broadcast progress to multiple clients via WebSockets:
+
+```php
+$agent
+    ->onAfterAction(function ($tool, $args, $result, $iteration) use ($userId) {
+        // Stream to HTTP client
+        yield new StreamedEvent(
+            event: 'action',
+            data: compact('tool', 'result', 'iteration')
+        );
+
+        // Also broadcast to WebSocket subscribers
+        broadcast(new AgentProgress($userId, [
+            'type' => 'action',
+            'tool' => $tool,
+            'result' => $result,
+        ]));
+    });
+```
+
+### 4. Conditional Callbacks
+
+Only fire callbacks for specific tools:
+
+```php
+$agent
+    ->onAfterAction(function ($tool, $args, $result, $iteration) {
+        // Only stream expensive API calls
+        if (in_array($tool, ['search_web', 'fetch_url'])) {
             yield new StreamedEvent(
-                event: 'error',
-                data: ['message' => $e->getMessage()],
+                event: 'action',
+                data: compact('tool', 'result')
             );
         }
     });
+```
+
+### 5. Tracking Costs
+
+Track API usage and costs:
+
+```php
+$totalCost = 0;
+
+$agent
+    ->onAfterThought(function ($response) use (&$totalCost) {
+        // Track token usage
+        $inputTokens = $response->usage['input_tokens'] ?? 0;
+        $outputTokens = $response->usage['output_tokens'] ?? 0;
+        
+        // Calculate cost (example for Claude Opus)
+        $cost = ($inputTokens / 1_000_000 * 5) + ($outputTokens / 1_000_000 * 25);
+        $totalCost += $cost;
+    })
+    ->onLoopComplete(function () use (&$totalCost) {
+        logger()->info("Total cost: $" . number_format($totalCost, 4));
+    });
+```
+
+## Max Iterations Handling
+
+Configure and handle iteration limits:
+
+```php
+$agent
+    ->maxIterations(15) // Override default (10)
+    ->onMaxIterationsReached(function ($response, int $iterations) {
+        logger()->warning("Agent hit max iterations", [
+            'iterations' => $iterations,
+            'partial_response' => $response?->text,
+        ]);
+
+        yield new StreamedEvent(
+            event: 'max_iterations',
+            data: [
+                'message' => 'Task took too long. Stopped after ' . $iterations . ' iterations.',
+                'partial_result' => $response?->text,
+            ],
+        );
+    });
+
+yield from $agent->reactLoopStream('Complex multi-step task...');
+```
+
+**Frontend handling:**
+
+```tsx
+const handleEvent = (event) => {
+    if (event.type === 'max_iterations') {
+        const data = JSON.parse(event.data);
+        alert(data.message);
+        // Show partial result if available
+        if (data.partial_result) {
+            setAnswer(data.partial_result);
+        }
+    }
+};
+```
+
+## Complete Working Example
+
+A fully-featured ReAct demo is available at:
+
+**Backend:** [`/Users/dalehurley/Code/packages/testlaragentic/routes/tutorial.php`](https://github.com/laragentic/demo) - See `/tutorial/react-loop-detailed` route
+
+**Frontend:** [`/Users/dalehurley/Code/packages/testlaragentic/resources/js/pages/ReactLoopDemo.tsx`](https://github.com/laragentic/demo)
+
+The demo includes:
+
+- Full iteration timeline with expandable cards
+- Real-time thought/action/observation display
+- Visual progress indicators
+- Event log for debugging
+- Max iterations handling
+
+## Comparison: ReAct vs Plan-Execute
+
+| Feature | ReAct Loop | Plan-Execute Loop |
+|---------|-----------|-------------------|
+| **Use Case** | Dynamic, exploratory tasks | Structured, multi-step tasks |
+| **Planning** | Implicit (agent decides per iteration) | Explicit (creates plan upfront) |
+| **Tool Calls** | Multiple per iteration | Typically one per step |
+| **Flexibility** | High (adapts each iteration) | Medium (follows plan, can replan) |
+| **Visibility** | See reasoning at each step | See entire plan upfront |
+| **Best For** | Q&A, research, investigation | Reports, analysis, workflows |
+
+**Example tasks:**
+
+- **ReAct**: "What's the weather in the warmest city: Tokyo, London, or Paris?"
+- **Plan-Execute**: "Create a comparison report of Tokyo, London, and Paris weather"
+
+## Troubleshooting
+
+### "Error: Stream failed" After Results Display
+
+**Problem:** Loop completes, final answer shows correctly, but then "Stream failed" error appears.
+
+**Cause:** Known bug in `@laravel/stream-react` v0.3.10 - throws error when EventSource closes.
+
+**Solution:** Add error handler wrapper in StreamListener component:
+
+```tsx
+const handleError = (error?: any) => {
+    // Known library bug: throws on normal closure
+    if (error?.message?.includes('startsWith') || error?.type === 'error') {
+        console.log('Stream closed normally');
+        onComplete(); // Treat as success
+    } else {
+        console.error('Stream error:', error);
+        onError(); // Real error
+    }
+};
+
+useEventStream(url, {
+    eventName: ['thinking', 'action', 'observation', 'complete', 'error'],
+    onMessage: onEvent,
+    onComplete,
+    onError: handleError,
 });
 ```
 
-### Customizing the End-of-Stream Signal
+### Agent Loops Too Many Times
 
-By default, Laravel sends a `</stream>` event when the stream ends. You can customize this:
+**Problem:** Agent keeps calling tools unnecessarily.
+
+**Solution:** Improve instructions to indicate when to stop:
 
 ```php
-return response()->eventStream(function () use ($agent, $message) {
-    $agent->onLoopComplete(function ($response) {
-        yield new StreamedEvent(event: 'complete', data: $response->text);
-    });
+public function instructions(): string
+{
+    return <<<'INSTRUCTIONS'
+    Use tools to gather information, then provide a FINAL answer.
     
-    yield from $agent->reactLoopStream($message);
-}, endStreamWith: new StreamedEvent(event: 'update', data: '</stream>'));
+    When you have enough information, respond with your answer.
+    Do NOT call tools again after you have the data you need.
+    INSTRUCTIONS;
+}
 ```
 
-## Important Notes
+### No Tool Calls Happening
 
-### How `eventStream()` Works
+**Problem:** Agent not using tools.
 
-Laravel's `eventStream()` method:
-- Sets the `Content-Type` to `text/event-stream` automatically
-- Handles SSE formatting (the `event:` / `data:` / `id:` lines)
-- Sends a `</stream>` event when the Generator finishes
-- Automatically flushes between each `yield`
-- Disables Nginx buffering
-
-### `StreamedEvent` Class
-
-Use `Illuminate\Http\StreamedEvent` to yield structured SSE events:
+**Solution:** Make tool usage explicit in instructions:
 
 ```php
-use Illuminate\Http\StreamedEvent;
-
-// Named event with structured data (auto-JSON-encoded)
-yield new StreamedEvent(
-    event: 'action',
-    data: ['tool' => 'search', 'result' => '...'],
-);
-
-// Named event with string data
-yield new StreamedEvent(
-    event: 'update',
-    data: 'Agent is thinking...',
-);
+public function instructions(): string
+{
+    return <<<'INSTRUCTIONS'
+    You MUST use the available tools. Do not guess or make up information.
+    
+    For weather: ALWAYS use get_weather tool
+    For calculations: ALWAYS use calculate tool
+    INSTRUCTIONS;
+}
 ```
 
-You can also yield plain strings for simple `update` events:
+### Slow Streaming
+
+**Problem:** Events arrive in bursts instead of real-time.
+
+**Solution:** Disable output buffering:
 
 ```php
-yield 'Hello'; // Sent as a default "update" event
+Route::get('/stream', function () {
+    ini_set('output_buffering', 'off');
+    ini_set('zlib.output_compression', 'off');
+    
+    return response()->eventStream(/* ... */);
+});
 ```
 
-### GET vs POST Routes
+## Next Steps
 
-`EventSource` in JavaScript only supports GET requests. For POST data, use either:
-
-1. **Query parameters** with a GET route (simple):
-   ```php
-   Route::get('/chat', fn () => response()->eventStream(...));
-   ```
-   ```javascript
-   new EventSource('/chat?message=Hello');
-   ```
-
-2. **Fetch API** with a POST route (for larger payloads):
-   ```javascript
-   const response = await fetch('/chat', {
-       method: 'POST',
-       headers: { 'Content-Type': 'application/json' },
-       body: JSON.stringify({ message: 'Hello' }),
-   });
-   // Process as SSE manually or use a library
-   ```
-
-## Performance Tips
-
-1. **Minimize data per event** — Stream only essential progress updates
-2. **Use named events** — Let the frontend filter by event type
-3. **Handle disconnections** — Users may close the browser mid-stream
-4. **Set timeouts appropriately** — Long-running agents need higher timeouts
-
-## References
-
-- [Laravel Event Streams (SSE)](https://laravel.com/docs/12.x/responses#event-streams-sse)
-- [ReAct Loop Documentation](../README.md#react-loop)
-- [Quick Reference: All Callbacks](quick-reference.md)
+- **[Streaming Plan-Execute Loop](streaming-plan-execute-loop.md)** — Learn the Plan-Execute pattern
+- **[Quick Reference](quick-reference.md)** — Callback cheat sheet
+- **[Complete Working Example](complete-example.md)** — Full chat agent with streaming

@@ -1,118 +1,214 @@
-# Streaming Plan-Execute Loop Progress
+# Streaming Plan-Execute Loop
 
-This tutorial shows how to stream Plan-Execute loop progress to users in real-time using Laravel's [Event Streams (SSE)](https://laravel.com/docs/12.x/responses#event-streams-sse) with the callbacks from the `PlanExecuteLoop` trait.
+Deep dive into the Plan-Execute pattern for multi-step tasks with real-time streaming.
 
-## The Problem
+![Plan-Execute Loop in Action](images/plan-execute-loop.png)
 
-Plan-Execute loops involve multiple distinct phases:
+*Watch the agent create a plan, execute each step sequentially, and synthesize a comprehensive final answer.*
 
-1. **Planning** — LLM creates a multi-step plan
-2. **Execution** — Each step is executed sequentially
-3. **Synthesis** — All results are combined into a final answer
+## What is Plan-Execute?
 
-Without streaming, users wait in silence while the agent works through potentially many steps.
+Plan-Execute is an agentic AI pattern designed for complex, multi-step tasks. Unlike ReAct (which plans on-the-fly), Plan-Execute creates a complete plan upfront, executes each step, then synthesizes the results:
 
-## The Solution
+```mermaid
+graph TD
+    Start[User Task] --> Plan[Create Plan]
+    Plan --> Step1[Execute Step 1]
+    Step1 --> Step2[Execute Step 2]
+    Step2 --> StepN[Execute Step N]
+    StepN --> Check{All Steps Done?}
+    Check -->|No| NextStep[Next Step]
+    NextStep --> StepN
+    Check -->|Yes| Synthesize[Synthesize Results]
+    Synthesize --> Answer[Final Answer]
+    Answer --> End[Complete]
+    
+    Step1 -.->|Failed| Replan[Replan]
+    Step2 -.->|Failed| Replan
+    StepN -.->|Failed| Replan
+    Replan --> Step1
+```
 
-Use `response()->eventStream()` to send Server-Sent Events for each phase, so users can follow along with the agent's work in real time.
+### The Plan-Execute Cycle
 
-The `PlanExecuteLoop` trait provides `planExecuteStream()` — a Generator method designed for streaming contexts. Unlike `planExecute()`, it propagates `yield` values from your callbacks to the parent Generator, making them compatible with `eventStream()`.
+1. **PLAN**: Break the task into clear, sequential steps
+2. **EXECUTE**: Complete each step (may use tools)
+3. **REPLAN** (optional): Adapt if a step fails
+4. **SYNTHESIZE**: Combine all step results
+5. **ANSWER**: Provide comprehensive final result
 
-## Basic Example
+This pattern is ideal for:
 
-Here's a minimal example that streams Plan-Execute loop progress:
+- Research tasks requiring multiple information sources
+- Analysis that needs structured steps
+- Reports combining data from different tools
+- Workflows with clear sequential dependencies
+
+## When to Use Plan-Execute vs ReAct
+
+| Scenario | Best Pattern | Why |
+|----------|-------------|-----|
+| "What's the weather in Tokyo?" | **ReAct** | Simple, single-tool query |
+| "Compare weather in 3 cities" | **Plan-Execute** | Structured, multi-step task |
+| "Find the warmest city" | **ReAct** | Requires dynamic exploration |
+| "Create a weather comparison report" | **Plan-Execute** | Formal output, clear steps |
+| "Search for X and calculate Y" | **ReAct** | Dynamic, exploratory |
+| "Research topic A, B, C then summarize" | **Plan-Execute** | Sequential research steps |
+
+**Rule of thumb:** If you know the steps upfront → Plan-Execute. If steps depend on discoveries → ReAct.
+
+## Basic Plan-Execute Agent (Non-Streaming)
+
+### Step 1: Create the Agent
 
 ```php
-use App\Agents\ExampleAgent;
-use Illuminate\Http\StreamedEvent;
-use Illuminate\Support\Facades\Route;
+<?php
 
-Route::get('/research', function () {
-    $agent = new ExampleAgent;
-    
-    return response()->eventStream(function () use ($agent) {
-        $agent
-            ->allowReplan()
-            ->maxSteps(8)
-            ->onPlanCreated(function (array $steps) {
-                yield new StreamedEvent(
-                    event: 'plan',
-                    data: ['steps' => $steps, 'count' => count($steps)],
-                );
-            })
-            ->onBeforeStep(function (int $stepNumber, string $description, int $totalSteps) {
-                yield new StreamedEvent(
-                    event: 'step',
-                    data: [
-                        'stage' => 'start',
-                        'number' => $stepNumber,
-                        'description' => $description,
-                        'total' => $totalSteps,
-                    ],
-                );
-            })
-            ->onAfterStep(function (int $stepNumber, string $description, $response, int $totalSteps) {
-                yield new StreamedEvent(
-                    event: 'step',
-                    data: [
-                        'stage' => 'complete',
-                        'number' => $stepNumber,
-                        'total' => $totalSteps,
-                    ],
-                );
-            })
-            ->onBeforeSynthesis(function (array $stepResults) {
-                yield new StreamedEvent(
-                    event: 'synthesis',
-                    data: ['stage' => 'start', 'stepCount' => count($stepResults)],
-                );
-            })
-            ->onLoopComplete(function ($response, int $totalSteps) {
-                yield new StreamedEvent(
-                    event: 'complete',
-                    data: [
-                        'text' => $response->text,
-                        'stepsExecuted' => $totalSteps,
-                    ],
-                );
-            });
+namespace App\Agents;
+
+use App\Tools\SearchTool;
+use App\Tools\WeatherTool;
+use App\Tools\CalculatorTool;
+use Laravel\Ai\Contracts\Agent;
+use Laravel\Ai\Contracts\HasTools;
+use Laravel\Ai\Promptable;
+use Laragentic\Loops\PlanExecuteLoop;
+
+class PlanningAgent implements Agent, HasTools
+{
+    use Promptable, PlanExecuteLoop;
+
+    public function instructions(): string
+    {
+        return <<<'INSTRUCTIONS'
+        You are a planning agent that breaks complex tasks into steps.
         
-        // Use the streaming variant — yields propagate from callbacks
-        yield from $agent->planExecuteStream(request()->input('task', 'Research Laravel AI SDK'));
-    });
+        Your workflow:
+        1. PLAN: Break the task into 3-6 clear, sequential steps
+        2. EXECUTE: Complete each step using available tools
+        3. SYNTHESIZE: Combine all results into a comprehensive answer
+        
+        Available tools:
+        - get_weather: For weather information
+        - search: For research and knowledge gathering
+        - calculate: For mathematical operations
+        
+        Create detailed plans. Execute each step thoroughly.
+        INSTRUCTIONS;
+    }
+
+    public function tools(): iterable
+    {
+        return [
+            new WeatherTool,
+            new SearchTool,
+            new CalculatorTool,
+        ];
+    }
+}
+```
+
+### Step 2: Use the Agent
+
+```php
+use App\Agents\PlanningAgent;
+
+Route::get('/plan', function () {
+    $agent = new PlanningAgent;
+    
+    $result = $agent->planExecute('Compare the weather in Tokyo, London, and Paris');
+    
+    return response()->json([
+        'answer' => $result->text,
+        'plan' => $result->plan,
+        'steps_executed' => $result->stepsExecuted(),
+        'was_replanned' => $result->wasReplanned(),
+    ]);
 });
 ```
 
-> **Why `planExecuteStream()`?** PHP generators are scoped to their closure. A `yield` inside a callback creates a Generator for *that callback only* — it doesn't propagate to the parent `eventStream()` closure. `planExecuteStream()` uses `yield from` internally to forward those values.
+**What happens:**
 
-## Advanced Example: Full Lifecycle with Replanning
+1. Agent receives the task
+2. Agent creates a plan:
+   - Step 1: Get weather for Tokyo
+   - Step 2: Get weather for London
+   - Step 3: Get weather for Paris
+   - Step 4: Compare the temperatures
+3. Agent executes each step
+4. Agent synthesizes the results into a final answer
 
-This example includes adaptive replanning support and all available callbacks:
+## Adding Streaming
+
+Let's stream the entire planning and execution process.
+
+### The Streaming Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Server
+    participant Agent
+    participant Tools
+
+    Client->>Server: GET /stream?task=...
+    Server->>Agent: planExecuteStream(task)
+    
+    Agent->>Server: onLoopStart
+    Server-->>Client: SSE: start
+    
+    Agent->>Agent: Create Plan (LLM call)
+    Agent->>Server: onPlanCreated
+    Server-->>Client: SSE: plan
+    
+    loop Each Step
+        Agent->>Server: onBeforeStep
+        Server-->>Client: SSE: step (start)
+        
+        Agent->>Tools: Execute step (may use tools)
+        Tools-->>Agent: Result
+        
+        Agent->>Server: onAfterStep
+        Server-->>Client: SSE: step (complete)
+        
+        alt Step Failed
+            Agent->>Agent: Create New Plan
+            Agent->>Server: onReplan
+            Server-->>Client: SSE: replan
+        end
+    end
+    
+    Agent->>Server: onBeforeSynthesis
+    Server-->>Client: SSE: synthesis (start)
+    
+    Agent->>Agent: Synthesize (LLM call)
+    
+    Agent->>Server: onAfterSynthesis
+    Server-->>Client: SSE: synthesis (complete)
+    
+    Agent->>Server: onLoopComplete
+    Server-->>Client: SSE: complete
+    Server-->>Client: SSE: </stream>
+```
+
+### Step 3: Create Streaming Route
 
 ```php
-use App\Agents\ExampleAgent;
+use App\Agents\PlanningAgent;
 use Illuminate\Http\StreamedEvent;
-use Illuminate\Support\Facades\Route;
 
-Route::get('/research/detailed', function () {
-    $agent = new ExampleAgent;
-    
+Route::get('/stream', function () {
+    $agent = new PlanningAgent;
+
     return response()->eventStream(function () use ($agent) {
         $agent
-            ->allowReplan()
-            ->maxSteps(10)
-            ->maxReplans(2)
-            ->onLoopStart(function (string $task) {
-                yield new StreamedEvent(
-                    event: 'start',
-                    data: ['task' => $task],
-                );
-            })
+            ->allowReplan()  // Enable adaptive replanning
+            ->maxSteps(8)    // Maximum steps allowed
+            
             ->onPlanCreated(function (array $steps) {
                 yield new StreamedEvent(
                     event: 'plan',
                     data: [
-                        'type' => 'initial',
                         'steps' => $steps,
                         'count' => count($steps),
                     ],
@@ -136,18 +232,7 @@ Route::get('/research/detailed', function () {
                         'stage' => 'complete',
                         'number' => $stepNumber,
                         'description' => $description,
-                        'result' => $response->text,
                         'total' => $totalSteps,
-                    ],
-                );
-            })
-            ->onReplan(function (array $newSteps, int $replanCount) {
-                yield new StreamedEvent(
-                    event: 'replan',
-                    data: [
-                        'attempt' => $replanCount,
-                        'newSteps' => $newSteps,
-                        'count' => count($newSteps),
                     ],
                 );
             })
@@ -167,338 +252,694 @@ Route::get('/research/detailed', function () {
                 yield new StreamedEvent(
                     event: 'complete',
                     data: [
-                        'stepsExecuted' => $totalSteps,
                         'text' => $response->text,
+                        'stepsExecuted' => $totalSteps,
                         'conversationId' => $response->conversationId,
                     ],
                 );
+            });
+
+        yield from $agent->planExecuteStream(request('task', 'Research AI models'));
+    });
+});
+```
+
+## Frontend Integration
+
+### React Component
+
+```tsx
+import { useEventStream } from '@laravel/stream-react';
+import { useState, useCallback } from 'react';
+
+type Step = {
+    number: number;
+    description: string;
+    status: 'pending' | 'executing' | 'completed';
+};
+
+export default function PlanExecuteDemo() {
+    const [task, setTask] = useState('');
+    const [streamUrl, setStreamUrl] = useState('');
+    const [plan, setPlan] = useState<Step[]>([]);
+    const [synthesis, setSynthesis] = useState<string | null>(null);
+    const [finalResult, setFinalResult] = useState('');
+
+    const handleEvent = useCallback((event: MessageEvent) => {
+        const data = JSON.parse(event.data);
+
+        if (event.type === 'plan') {
+            const steps = data.steps.map((desc: string, idx: number) => ({
+                number: idx + 1,
+                description: desc,
+                status: 'pending' as const,
+            }));
+            setPlan(steps);
+        } else if (event.type === 'step') {
+            if (data.stage === 'start') {
+                setPlan(prev => prev.map(step =>
+                    step.number === data.number
+                        ? { ...step, status: 'executing' }
+                        : step
+                ));
+            } else if (data.stage === 'complete') {
+                setPlan(prev => prev.map(step =>
+                    step.number === data.number
+                        ? { ...step, status: 'completed' }
+                        : step
+                ));
+            }
+        } else if (event.type === 'synthesis') {
+            if (data.stage === 'complete') {
+                setSynthesis(data.text);
+            }
+        } else if (event.type === 'complete') {
+            setFinalResult(data.text);
+        }
+    }, []);
+
+    const handleStart = () => {
+        setPlan([]);
+        setSynthesis(null);
+        setFinalResult('');
+        setStreamUrl(`/stream?task=${encodeURIComponent(task)}`);
+    };
+
+    return (
+        <div>
+            {streamUrl && (
+                <StreamListener url={streamUrl} onEvent={handleEvent} />
+            )}
+
+            <input
+                value={task}
+                onChange={e => setTask(e.target.value)}
+                placeholder="Describe a multi-step task..."
+            />
+            <button onClick={handleStart}>Start Planning</button>
+
+            {/* Plan visualization */}
+            {plan.length > 0 && (
+                <div className="plan">
+                    <h2>Plan ({plan.length} steps)</h2>
+                    {plan.map(step => (
+                        <div key={step.number} className={step.status}>
+                            <span className="number">{step.number}</span>
+                            <span className="description">{step.description}</span>
+                            <span className="status">{step.status}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Synthesis */}
+            {synthesis && (
+                <div className="synthesis">
+                    <h2>Synthesis</h2>
+                    <p>{synthesis}</p>
+                </div>
+            )}
+
+            {/* Final result */}
+            {finalResult && (
+                <div className="result">
+                    <h2>Final Result</h2>
+                    <p>{finalResult}</p>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function StreamListener({ url, onEvent }) {
+    // Wrap error handler to filter out @laravel/stream-react bugs
+    const handleError = (error?: any) => {
+        if (error?.message?.includes('startsWith') || error?.type === 'error') {
+            console.log('Stream closed normally');
+        } else {
+            console.error('Stream error:', error);
+        }
+    };
+
+    useEventStream(url, {
+        eventName: ['plan', 'step', 'synthesis', 'complete'],
+        onMessage: onEvent,
+        onError: handleError,
+    });
+    return null;
+}
+```
+
+## All Lifecycle Callbacks
+
+For maximum visibility and control:
+
+```php
+Route::get('/stream-detailed', function () {
+    $agent = new PlanningAgent;
+
+    return response()->eventStream(function () use ($agent) {
+        $agent
+            ->allowReplan()
+            ->maxSteps(10)
+            ->maxReplans(2)
+            
+            // ─── Loop Start ────────────────────────────────────
+            ->onLoopStart(function (string $task) {
+                yield new StreamedEvent(
+                    event: 'start',
+                    data: ['task' => $task],
+                );
             })
+            
+            // ─── Planning Phase ────────────────────────────────
+            ->onPlanCreated(function (array $steps) {
+                yield new StreamedEvent(
+                    event: 'plan',
+                    data: [
+                        'type' => 'initial',
+                        'steps' => $steps,
+                        'count' => count($steps),
+                    ],
+                );
+            })
+            
+            // ─── Step Execution ────────────────────────────────
+            ->onBeforeStep(function (int $stepNumber, string $description, int $totalSteps) {
+                yield new StreamedEvent(
+                    event: 'step',
+                    data: [
+                        'stage' => 'start',
+                        'number' => $stepNumber,
+                        'description' => $description,
+                        'total' => $totalSteps,
+                    ],
+                );
+            })
+            ->onAfterStep(function (int $stepNumber, string $description, $response, int $totalSteps) {
+                yield new StreamedEvent(
+                    event: 'step',
+                    data: [
+                        'stage' => 'complete',
+                        'number' => $stepNumber,
+                        'description' => $description,
+                        'result' => substr($response->text ?? '', 0, 200), // Truncate for streaming
+                        'total' => $totalSteps,
+                    ],
+                );
+            })
+            
+            // ─── Replanning ────────────────────────────────────
+            ->onReplan(function (array $newSteps, int $replanCount) {
+                yield new StreamedEvent(
+                    event: 'replan',
+                    data: [
+                        'attempt' => $replanCount,
+                        'newSteps' => $newSteps,
+                        'count' => count($newSteps),
+                    ],
+                );
+            })
+            
+            // ─── Synthesis Phase ───────────────────────────────
+            ->onBeforeSynthesis(function (array $stepResults) {
+                yield new StreamedEvent(
+                    event: 'synthesis',
+                    data: [
+                        'stage' => 'start',
+                        'stepCount' => count($stepResults),
+                    ],
+                );
+            })
+            ->onAfterSynthesis(function ($response) {
+                yield new StreamedEvent(
+                    event: 'synthesis',
+                    data: [
+                        'stage' => 'complete',
+                        'text' => $response->text ?? '',
+                    ],
+                );
+            })
+            
+            // ─── Loop Complete ─────────────────────────────────
+            ->onLoopComplete(function ($response, int $totalSteps) {
+                yield new StreamedEvent(
+                    event: 'complete',
+                    data: [
+                        'stepsExecuted' => $totalSteps,
+                        'text' => $response->text ?? 'Synthesis complete',
+                        'conversationId' => $response->conversationId ?? null,
+                    ],
+                );
+            })
+            
+            // ─── Error Handling ────────────────────────────────
             ->onMaxStepsReached(function ($response, int $stepsExecuted) {
                 yield new StreamedEvent(
                     event: 'max_steps',
                     data: [
                         'stepsExecuted' => $stepsExecuted,
-                        'text' => $response->text,
+                        'text' => $response->text ?? 'Max steps reached',
                     ],
                 );
             });
-        
-        // Use the streaming variant — yields propagate from callbacks
-        yield from $agent->planExecuteStream(request()->input('task', 'Research Laravel AI SDK'));
+
+        yield from $agent->planExecuteStream(request('task'));
     });
 });
 ```
 
-## Consuming the Event Stream
+## Adaptive Replanning
 
-### JavaScript (EventSource)
+One of Plan-Execute's most powerful features is adaptive replanning — if a step fails, the agent can create a new plan.
 
-```javascript
-const source = new EventSource('/research?task=Compare+React+and+Vue');
+### Enable Replanning
 
-source.addEventListener('plan', (e) => {
-    const data = JSON.parse(e.data);
-    console.log(`📋 Plan (${data.count} steps):`, data.steps);
-});
+```php
+$agent
+    ->allowReplan()      // Enable replanning (default: true)
+    ->maxReplans(3)      // Maximum replans allowed (default: 3)
+    ->onReplan(function (array $newSteps, int $replanCount) {
+        logger()->info("Agent replanned (attempt {$replanCount})", [
+            'new_plan' => $newSteps,
+        ]);
 
-source.addEventListener('step', (e) => {
-    const data = JSON.parse(e.data);
-    if (data.stage === 'start') {
-        console.log(`▶️  Step ${data.number}/${data.total}: ${data.description}`);
-    } else {
-        console.log(`✓ Step ${data.number} complete:`, data.result);
-    }
-});
-
-source.addEventListener('replan', (e) => {
-    const data = JSON.parse(e.data);
-    console.log(`🔄 Replanning (attempt ${data.attempt})...`);
-    console.log('New plan:', data.newSteps);
-});
-
-source.addEventListener('synthesis', (e) => {
-    const data = JSON.parse(e.data);
-    if (data.stage === 'start') {
-        console.log('🔄 Synthesizing results...');
-    } else {
-        console.log('✅ Synthesis complete:', data.text);
-    }
-});
-
-source.addEventListener('complete', (e) => {
-    const data = JSON.parse(e.data);
-    console.log(`✅ Complete in ${data.stepsExecuted} steps!`);
-    console.log('Final answer:', data.text);
-    source.close();
-});
-
-// Laravel sends </stream> as an "update" event when the generator finishes
-source.addEventListener('update', (e) => {
-    if (e.data === '</stream>') {
-        source.close();
-    }
-});
+        yield new StreamedEvent(
+            event: 'replan',
+            data: [
+                'attempt' => $replanCount,
+                'reason' => 'Previous step failed or was insufficient',
+                'newSteps' => $newSteps,
+            ],
+        );
+    });
 ```
 
-### React with `@laravel/stream-react`
+### When Replanning Occurs
 
-```bash
-npm install @laravel/stream-react
+Replanning happens automatically when:
+
+1. A step execution fails (tool error, API failure)
+2. A step produces insufficient results
+3. The agent determines the original plan won't work
+
+**Example scenario:**
+
 ```
+Original Plan:
+1. Get weather for Tokyo
+2. Get weather for London
+3. Compare temperatures
+
+Step 1 fails (API error)
+
+New Plan (Replan #1):
+1. Search for Tokyo weather information
+2. Get weather for London
+3. Compare available data
+```
+
+### Frontend Visualization
 
 ```tsx
-import { useEventStream } from '@laravel/stream-react';
+const [plans, setPlans] = useState<Array<{ type: 'initial' | 'replan', steps: Step[] }>>([]);
 
-function ResearchAgent() {
-    const { message } = useEventStream('/research?task=Compare+React+and+Vue', {
-        onMessage: (msg) => console.log('Progress:', msg),
-        onComplete: () => console.log('Research done!'),
-    });
+const handleEvent = (event: MessageEvent) => {
+    const data = JSON.parse(event.data);
 
-    return (
-        <div>
-            <pre>{message}</pre>
-        </div>
-    );
-}
-```
-
-### Vue with `@laravel/stream-vue`
-
-```bash
-npm install @laravel/stream-vue
-```
-
-```vue
-<script setup lang="ts">
-import { useEventStream } from '@laravel/stream-vue';
-
-const { message } = useEventStream('/research?task=Compare+React+and+Vue', {
-    onMessage: (msg) => console.log('Progress:', msg),
-});
-</script>
-
-<template>
-    <div>
-        <pre>{{ message }}</pre>
-    </div>
-</template>
-```
-
-## Real-World Example: Research Dashboard
-
-Here's a complete example with detailed progress tracking and error handling:
-
-```php
-use App\Agents\ResearchAgent;
-use Illuminate\Http\StreamedEvent;
-use Illuminate\Support\Facades\Route;
-
-Route::get('/research/dashboard', function () {
-    $task = request()->input('task');
-    $userId = auth()->id();
-    
-    if (empty($task)) {
-        return response()->json(['error' => 'Task required'], 400);
+    if (event.type === 'plan') {
+        setPlans(prev => [...prev, {
+            type: data.type === 'initial' ? 'initial' : 'replan',
+            steps: data.steps.map((desc, idx) => ({
+                number: idx + 1,
+                description: desc,
+                status: 'pending',
+            })),
+        }]);
+    } else if (event.type === 'replan') {
+        setPlans(prev => [...prev, {
+            type: 'replan',
+            steps: data.newSteps.map((desc, idx) => ({
+                number: idx + 1,
+                description: desc,
+                status: 'pending',
+            })),
+        }]);
     }
-    
-    $agent = new ResearchAgent;
-    $agent->forUser($userId);
-    
-    $completedSteps = 0;
-    $totalSteps = 0;
-    
-    return response()->eventStream(function () use ($agent, $task, &$completedSteps, &$totalSteps) {
-        try {
-            $agent
-                ->allowReplan()
-                ->maxSteps(12)
-                ->maxReplans(3)
-                ->onLoopStart(function () use ($task) {
-                    yield new StreamedEvent(
-                        event: 'start',
-                        data: ['task' => $task, 'timestamp' => now()->toIso8601String()],
-                    );
-                })
-                ->onPlanCreated(function (array $steps) use (&$totalSteps) {
-                    $totalSteps = count($steps);
-                    yield new StreamedEvent(
-                        event: 'plan',
-                        data: ['steps' => $steps, 'count' => count($steps)],
-                    );
-                })
-                ->onBeforeStep(function (int $stepNumber, string $description) use (&$completedSteps, &$totalSteps) {
-                    $percentage = $totalSteps > 0
-                        ? round(($completedSteps / $totalSteps) * 100, 1)
-                        : 0;
-                    
-                    yield new StreamedEvent(
-                        event: 'step',
-                        data: [
-                            'stage' => 'start',
-                            'number' => $stepNumber,
-                            'description' => $description,
-                            'progress' => [
-                                'completed' => $completedSteps,
-                                'total' => $totalSteps,
-                                'percentage' => $percentage,
-                            ],
-                        ],
-                    );
-                })
-                ->onAfterStep(function (int $stepNumber, string $description, $response) use (&$completedSteps) {
-                    $completedSteps++;
-                    yield new StreamedEvent(
-                        event: 'step',
-                        data: [
-                            'stage' => 'complete',
-                            'number' => $stepNumber,
-                            'description' => $description,
-                        ],
-                    );
-                })
-                ->onReplan(function (array $newSteps, int $replanCount) use (&$totalSteps, &$completedSteps) {
-                    $totalSteps = count($newSteps);
-                    $completedSteps = 0;
-                    yield new StreamedEvent(
-                        event: 'replan',
-                        data: [
-                            'attempt' => $replanCount,
-                            'newSteps' => $newSteps,
-                            'count' => count($newSteps),
-                        ],
-                    );
-                })
-                ->onBeforeSynthesis(function (array $stepResults) {
-                    yield new StreamedEvent(
-                        event: 'synthesis',
-                        data: ['stage' => 'start', 'stepCount' => count($stepResults)],
-                    );
-                })
-                ->onLoopComplete(function ($response, int $totalSteps) {
-                    yield new StreamedEvent(
-                        event: 'complete',
-                        data: [
-                            'stepsExecuted' => $totalSteps,
-                            'text' => $response->text,
-                            'conversationId' => $response->conversationId,
-                            'timestamp' => now()->toIso8601String(),
-                        ],
-                    );
-                });
-            
-            yield from $agent->planExecuteStream($task);
-            
-        } catch (\Throwable $e) {
-            yield new StreamedEvent(
-                event: 'error',
-                data: [
-                    'message' => $e->getMessage(),
-                    'timestamp' => now()->toIso8601String(),
-                ],
-            );
-        }
-    });
-});
+};
+
+// Render
+{plans.map((plan, idx) => (
+    <div key={idx}>
+        <h3>
+            {plan.type === 'initial' ? 'Initial Plan' : `Replan #${idx}`}
+        </h3>
+        {plan.steps.map(step => (
+            <div key={step.number}>{step.description}</div>
+        ))}
+    </div>
+))}
 ```
 
-## Phase-Specific Callbacks
+## Advanced Patterns
 
-The Plan-Execute loop has callbacks for each distinct phase:
+### 1. Progress Tracking
 
-| Phase | Callback | Receives |
-|-------|----------|----------|
-| **Planning** | `onPlanCreated` | `array $steps` |
-| **Execution** | `onBeforeStep` | `int $stepNumber, string $description, int $totalSteps` |
-| **Execution** | `onAfterStep` | `int $stepNumber, string $description, AgentResponse $response, int $totalSteps` |
-| **Replanning** | `onReplan` | `array $newSteps, int $replanCount` |
-| **Synthesis** | `onBeforeSynthesis` | `array $stepResults` |
-| **Synthesis** | `onAfterSynthesis` | `AgentResponse $response` |
-| **Completion** | `onLoopComplete` | `AgentResponse $response, int $totalSteps` |
-| **Limits** | `onMaxStepsReached` | `AgentResponse $response, int $stepsExecuted` |
-
-## Progress Tracking Pattern
-
-Track progress as steps complete:
+Track overall progress across all steps:
 
 ```php
-$completedSteps = 0;
 $totalSteps = 0;
+$completedSteps = 0;
 
 $agent
     ->onPlanCreated(function (array $steps) use (&$totalSteps) {
         $totalSteps = count($steps);
-        yield new StreamedEvent(
-            event: 'plan',
-            data: ['total' => $totalSteps],
-        );
     })
     ->onAfterStep(function () use (&$completedSteps, &$totalSteps) {
         $completedSteps++;
-        $percentage = round(($completedSteps / $totalSteps) * 100, 1);
-        
+        $progress = ($completedSteps / $totalSteps) * 100;
+
         yield new StreamedEvent(
             event: 'progress',
             data: [
                 'completed' => $completedSteps,
                 'total' => $totalSteps,
-                'percentage' => $percentage,
+                'percentage' => round($progress, 1),
             ],
         );
     });
-
-// Use the streaming variant inside eventStream()
-yield from $agent->planExecuteStream($task);
 ```
 
-## Important Notes
+### 2. Step Results Collection
 
-### How `eventStream()` Works
-
-Laravel's `eventStream()` method:
-- Sets `Content-Type: text/event-stream` automatically
-- Handles SSE formatting (the `event:` / `data:` lines)
-- Sends a `</stream>` event when the Generator finishes
-- Automatically flushes between each `yield`
-- Disables Nginx buffering
-
-### Replanning Resets Progress
-
-When replanning occurs, the step counter typically resets because the plan changes:
+Collect and expose step results:
 
 ```php
-->onReplan(function (array $newSteps) use (&$completedSteps, &$totalSteps) {
-    $completedSteps = 0; // Reset
-    $totalSteps = count($newSteps); // New total
-})
+$stepResults = [];
+
+$agent
+    ->onAfterStep(function ($stepNumber, $description, $response) use (&$stepResults) {
+        $stepResults[$stepNumber] = [
+            'description' => $description,
+            'result' => $response->text,
+        ];
+
+        yield new StreamedEvent(
+            event: 'step',
+            data: [
+                'number' => $stepNumber,
+                'result' => $response->text,
+            ],
+        );
+    })
+    ->onLoopComplete(function () use (&$stepResults) {
+        logger()->info('All step results', $stepResults);
+    });
 ```
 
-### Synthesis is a Separate Phase
+### 3. Time Tracking
 
-After all steps execute, synthesis combines results. This is a distinct phase with its own callbacks.
-
-### GET vs POST Routes
-
-`EventSource` only supports GET. For POST data, pass parameters as query strings or use the Fetch API:
+Track execution time per step:
 
 ```php
-// GET route with query params (works with EventSource)
-Route::get('/research', fn () => response()->eventStream(...));
+$stepStartTime = null;
+
+$agent
+    ->onBeforeStep(function () use (&$stepStartTime) {
+        $stepStartTime = microtime(true);
+    })
+    ->onAfterStep(function ($stepNumber) use (&$stepStartTime) {
+        $duration = microtime(true) - $stepStartTime;
+
+        yield new StreamedEvent(
+            event: 'step',
+            data: [
+                'number' => $stepNumber,
+                'duration_seconds' => round($duration, 2),
+            ],
+        );
+    });
 ```
 
-```javascript
-new EventSource('/research?task=Compare+React+and+Vue');
+### 4. Conditional Replanning
+
+Only replan for specific failures:
+
+```php
+class MyAgent implements Agent
+{
+    use Promptable, PlanExecuteLoop;
+
+    protected function shouldReplan(\Throwable $exception, int $replanCount): bool
+    {
+        // Only replan for API errors, not validation errors
+        if ($exception instanceof ValidationException) {
+            return false;
+        }
+
+        // Stop replanning after 2 attempts
+        if ($replanCount >= 2) {
+            return false;
+        }
+
+        return true;
+    }
+}
 ```
 
-## Performance Tips
+### 5. Step Validation
 
-1. **Stream summaries, not full results** — Send full step results only if needed
-2. **Track progress** — Users appreciate knowing "Step 3 of 8"
-3. **Show replanning** — Let users know when the plan changes
-4. **Use named events** — Let the frontend filter and handle event types
+Validate step results before continuing:
 
-## References
+```php
+$agent
+    ->onAfterStep(function ($stepNumber, $description, $response) {
+        // Check if step produced useful results
+        if (strlen($response->text) < 10) {
+            logger()->warning("Step {$stepNumber} produced minimal output");
 
-- [Laravel Event Streams (SSE)](https://laravel.com/docs/12.x/responses#event-streams-sse)
-- [Plan-Execute Loop Documentation](../README.md#plan-execute-loop)
-- [Quick Reference: All Callbacks](quick-reference.md)
+            yield new StreamedEvent(
+                event: 'warning',
+                data: [
+                    'step' => $stepNumber,
+                    'message' => 'Step produced minimal output',
+                ],
+            );
+        }
+    });
+```
+
+## Configuration Options
+
+### Fluent API
+
+```php
+$agent
+    ->maxSteps(15)           // Max steps to execute (default: 10)
+    ->allowReplan()          // Enable replanning (default: true)
+    ->maxReplans(5)          // Max replan attempts (default: 3)
+    ->planExecuteStream($task);
+```
+
+### Environment Variables
+
+```env
+AGENTIC_PLAN_MAX_STEPS=10
+AGENTIC_PLAN_ALLOW_REPLAN=true
+AGENTIC_PLAN_MAX_REPLANS=3
+AGENTIC_PLAN_THROW_ON_MAX_STEPS=false
+```
+
+### Config File
+
+```php
+// config/agentic.php
+return [
+    'plan_execute' => [
+        'max_steps' => env('AGENTIC_PLAN_MAX_STEPS', 10),
+        'allow_replan' => env('AGENTIC_PLAN_ALLOW_REPLAN', true),
+        'max_replans' => env('AGENTIC_PLAN_MAX_REPLANS', 3),
+        'throw_on_max_steps' => env('AGENTIC_PLAN_THROW_ON_MAX_STEPS', false),
+    ],
+];
+```
+
+## Complete Working Example
+
+A fully-featured Plan-Execute demo is available at:
+
+**Backend:** [`/Users/dalehurley/Code/packages/testlaragentic/routes/tutorial.php`](https://github.com/laragentic/demo) - See `/tutorial/plan-execute-detailed` route
+
+**Frontend:** [`/Users/dalehurley/Code/packages/testlaragentic/resources/js/pages/PlanExecuteDemo.tsx`](https://github.com/laragentic/demo)
+
+The demo includes:
+
+- Plan visualization with initial + replans
+- Step-by-step execution progress
+- Synthesis phase indicator
+- Comparison of original vs executed plans
+- Event log for debugging
+
+## Real-World Use Cases
+
+### Research Report
+
+```php
+$task = 'Research the top 3 AI models of 2026 and create a comparison report';
+
+// Agent will:
+// 1. Search for GPT-5.2 information
+// 2. Search for Claude Opus 4.6 information
+// 3. Search for Gemini 3 Pro information
+// 4. Synthesize into a structured comparison
+```
+
+### Multi-City Weather Analysis
+
+```php
+$task = 'Compare weather in Tokyo, London, Paris, and Sydney, then calculate the average temperature';
+
+// Agent will:
+// 1. Get weather for Tokyo
+// 2. Get weather for London
+// 3. Get weather for Paris
+// 4. Get weather for Sydney
+// 5. Calculate average temperature
+// 6. Synthesize into a summary
+```
+
+### Competitive Analysis
+
+```php
+$task = 'Analyze React, Vue, and Svelte frameworks and recommend the best for a new project';
+
+// Agent will:
+// 1. Research React (popularity, features, ecosystem)
+// 2. Research Vue (popularity, features, ecosystem)
+// 3. Research Svelte (popularity, features, ecosystem)
+// 4. Compare strengths and weaknesses
+// 5. Synthesize recommendation with reasoning
+```
+
+## Troubleshooting
+
+### "Error: Stream failed" But Results Are Shown
+
+**Problem:** Demo shows all steps, synthesis completes successfully, but final result displays "Error: Stream failed".
+
+**Cause:** Known bug in `@laravel/stream-react` v0.3.10 - the library throws a JavaScript error (`Cannot read properties of undefined (reading 'startsWith')`) when the EventSource closes normally.
+
+**Solution:** Wrap the error handler to distinguish between the library bug and real errors:
+
+```tsx
+function StreamListener({ url, onEvent, onComplete, onError }) {
+    const handleError = (error?: any) => {
+        // Filter out the @laravel/stream-react closure bug
+        if (error?.message?.includes('startsWith') || error?.type === 'error') {
+            console.log('Stream closed (EventSource error - normal closure)');
+            onComplete(); // Treat as successful completion
+        } else {
+            console.error('Stream error:', error);
+            onError(); // Real error
+        }
+    };
+
+    useEventStream(url, {
+        eventName: ['start', 'plan', 'step', 'replan', 'synthesis', 'complete', 'error'],
+        onMessage: onEvent,
+        onComplete,
+        onError: handleError,
+    });
+    return null;
+}
+```
+
+Also ensure your completion handler uses synthesis as fallback:
+
+```tsx
+const handleComplete = useCallback(() => {
+    setIsRunning(false);
+    setStreamUrl('');
+    
+    // If we have synthesis but no final result, use synthesis
+    if (synthesis?.text && !finalResult) {
+        setFinalResult(synthesis.text);
+    }
+}, [synthesis, finalResult]);
+```
+
+### Plan Too Generic
+
+**Problem:** Agent creates vague, unhelpful plans.
+
+**Solution:** Improve instructions to require detailed plans:
+
+```php
+public function instructions(): string
+{
+    return <<<'INSTRUCTIONS'
+    Create DETAILED, SPECIFIC plans with 4-6 steps.
+    
+    Good: "Get weather for Tokyo using the get_weather tool"
+    Bad: "Check Tokyo"
+    
+    Each step should be clear and actionable.
+    INSTRUCTIONS;
+}
+```
+
+### Steps Execute in Wrong Order
+
+**Problem:** Steps seem unordered or illogical.
+
+**Solution:** Emphasize sequencing in instructions:
+
+```php
+public function instructions(): string
+{
+    return <<<'INSTRUCTIONS'
+    Create plans with SEQUENTIAL steps where each step builds on previous results.
+    
+    Step 1 should gather initial data.
+    Step 2 should process or extend that data.
+    Final step should synthesize everything.
+    INSTRUCTIONS;
+}
+```
+
+### Replanning Too Often
+
+**Problem:** Agent replans unnecessarily.
+
+**Solution:** Reduce max_replans or disable replanning:
+
+```php
+$agent
+    ->maxReplans(1)  // Only allow one replan
+    // OR
+    ->allowReplan(false);  // Disable replanning entirely
+```
+
+### Synthesis Missing Information
+
+**Problem:** Final synthesis doesn't include all step results.
+
+**Solution:** The synthesis phase receives all step results automatically. Improve synthesis instructions:
+
+```php
+public function instructions(): string
+{
+    return <<<'INSTRUCTIONS'
+    When synthesizing:
+    - Include information from EVERY step
+    - Create a structured summary
+    - Provide specific data, not generalizations
+    INSTRUCTIONS;
+}
+```
+
+## Next Steps
+
+- **[Streaming ReAct Loop](streaming-react-loop.md)** — Learn the ReAct pattern
+- **[Quick Reference](quick-reference.md)** — Callback cheat sheet
+- **[Complete Working Example](complete-example.md)** — Full chat agent with streaming

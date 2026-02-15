@@ -1,16 +1,67 @@
 # Laragentic Agents
 
-Agentic loops and AI agent capabilities for the [Laravel AI SDK](https://laravel.com/docs/12.x/ai-sdk).
+**Add one trait. Get autonomous AI agents.**
 
-## About
+Laragentic extends the [Laravel AI SDK](https://laravel.com/docs/12.x/ai-sdk) with agentic loops — letting your agents autonomously reason, call tools, and iterate until they reach an answer.
 
-The Laravel AI SDK provides agents, tools, streaming, and conversations — but it does not provide autonomous agentic loops. Laragentic Agents fills that gap by adding:
+```php
+class ChatAgent implements Agent, HasTools
+{
+    use Promptable, ReActLoop; // ← add this trait
 
-- **ReAct Loop** — Iterative Thought → Action → Observation cycles that let agents autonomously call tools and reason about results
-- **Plan-Execute Loop** — Systematic plan-then-execute pattern that breaks complex tasks into steps, executes each sequentially, and synthesizes a final answer
-- **Lifecycle Callbacks** — Hook into every phase of any loop to stream progress, log activity, or implement custom logic
-- **Configurable Limits** — Set maximum iterations/steps to prevent runaway loops and control token usage
-- **Adaptive Replanning** — The Plan-Execute loop can revise its plan mid-execution if a step fails
+    // ... your existing agent code
+}
+
+$result = (new ChatAgent)->reactLoop('What is the weather in Tokyo?');
+
+echo $result->text(); // "It's 22°C and partly cloudy in Tokyo."
+```
+
+Your agent now thinks, calls tools on its own, reads the results, and keeps going until it has a complete answer — all in one method call.
+
+---
+
+## See It In Action
+
+### ReAct Loop: Autonomous Reasoning + Acting
+
+The agent thinks, searches, calculates, and synthesizes — all on its own.
+
+![ReAct Loop Demo](tutorial/images/react-loop.png)
+
+### Plan-Execute Loop: Multi-Step Planning & Synthesis
+
+Watch the agent create a plan, execute each step, and synthesize the final answer.
+
+![Plan-Execute Loop](tutorial/images/plan-execute-loop.png)
+
+### Complete Chat Agent with Tools
+
+A full conversational agent with weather lookup and calculator capabilities.
+
+![Complete Chat Example](tutorial/images/complete-chat-example.png)
+
+> **Want to try these examples?** Clone the **[laragentic-app-examples](https://github.com/laragentic/laragentic-app-examples)** repository — a complete Laravel app with all demos ready to run.
+
+---
+
+## Why Laragentic?
+
+The Laravel AI SDK gives you agents, tools, streaming, and conversations. But when you call `prompt()`, the agent responds once — if it wants to call a tool, inspect the result, and reason further, you have to write that loop yourself.
+
+Laragentic adds that missing piece:
+
+| What you get            | What it does                                                         |
+| ----------------------- | -------------------------------------------------------------------- |
+| **ReAct Loop**          | Think → call tools → observe results → repeat until done             |
+| **Plan-Execute Loop**   | Create a plan → execute each step → synthesize a final answer        |
+| **Lifecycle Callbacks** | Hook into every phase to stream progress, log, or broadcast          |
+| **Configurable Limits** | Set max iterations/steps to control cost and prevent runaway loops   |
+| **Adaptive Replanning** | The Plan-Execute loop revises its plan mid-execution if a step fails |
+
+**Zero configuration required.** Add `use ReActLoop` to your agent, call `->reactLoop()`, and it works.
+
+---
 
 ## Requirements
 
@@ -24,26 +75,85 @@ The Laravel AI SDK provides agents, tools, streaming, and conversations — but 
 composer require laragentic/agents
 ```
 
-Publish the configuration file:
+Optionally publish the configuration:
 
 ```bash
 php artisan vendor:publish --tag=agentic-config
 ```
 
-## Quick Start: Streaming Agent Progress
+---
 
-Agentic loops can take time to complete. Stream real-time progress to users using Laravel's [Event Streams (SSE)](https://laravel.com/docs/12.x/responses#event-streams-sse) with loop callbacks.
+## Quick Start
 
-Each loop trait provides a streaming variant — `reactLoopStream()` and `planExecuteStream()` — that returns a Generator. Callback `yield` values propagate to the parent Generator, making them compatible with `response()->eventStream()`.
+This guide assumes you have a Laravel 12 app with [Inertia](https://inertiajs.com/), React, and the [Laravel AI SDK](https://laravel.com/docs/12.x/ai-sdk) already installed.
 
-**First, create a `ChatAgent`** — a standard Laravel AI SDK agent with the `ReActLoop` trait:
+You'll create three files to get a working agent that calls tools autonomously and streams real-time progress to a frontend:
+
+| File                          | What it does                           |
+| ----------------------------- | -------------------------------------- |
+| `app/Tools/WeatherTool.php`   | A tool the agent can call              |
+| `app/Agents/ChatAgent.php`    | An agent with the ReAct loop           |
+| `resources/js/pages/chat.tsx` | A React frontend that streams progress |
+
+### Step 1: Create a Tool
+
+Tools implement `Laravel\Ai\Contracts\Tool`. They have a name, a description (so the LLM knows when to use them), a JSON schema for parameters, and a `handle()` method that does the work.
+
+Create `app/Tools/WeatherTool.php`:
+
+```php
+<?php
+
+namespace App\Tools;
+
+use Illuminate\Contracts\JsonSchema\JsonSchema;
+use Laravel\Ai\Contracts\Tool;
+use Laravel\Ai\Tools\Request;
+use Stringable;
+
+class WeatherTool implements Tool
+{
+    public function name(): string
+    {
+        return 'get_weather';
+    }
+
+    public function description(): Stringable|string
+    {
+        return 'Get the current weather for a given city.';
+    }
+
+    public function handle(Request $request): Stringable|string
+    {
+        $city = $request['city'] ?? 'Unknown';
+
+        // Replace with a real API call (e.g. OpenWeatherMap)
+        return "Weather in {$city}: Partly Cloudy, 22°C, Humidity: 65%";
+    }
+
+    public function schema(JsonSchema $schema): array
+    {
+        return [
+            'city' => $schema->string()
+                ->description('The city name, e.g. "Tokyo", "London"')
+                ->required(),
+        ];
+    }
+}
+```
+
+### Step 2: Create an Agent
+
+Add the `ReActLoop` trait to a standard Laravel AI SDK agent. Your agent must implement `HasTools` so the SDK registers your tools with the LLM.
+
+Create `app/Agents/ChatAgent.php`:
 
 ```php
 <?php
 
 namespace App\Agents;
 
-use App\Ai\Tools\WeatherTool;
+use App\Tools\WeatherTool;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Promptable;
@@ -65,16 +175,28 @@ class ChatAgent implements Agent, HasTools
 }
 ```
 
-**Then stream its progress** via an SSE route:
+That's it — `ChatAgent` can now autonomously call `get_weather`, read the result, and produce a final answer.
+
+### Step 3: Add Routes
+
+Add two routes to `routes/web.php` — one serves the frontend page, the other streams agent progress via [Server-Sent Events](https://laravel.com/docs/12.x/responses#event-streams-sse).
+
+Use `reactLoopStream()` inside `response()->eventStream()` — this streaming variant propagates `yield` values from your callbacks to the HTTP response.
 
 ```php
+<?php
+
+use Illuminate\Support\Facades\Route;
+use Inertia\Inertia;
 use App\Agents\ChatAgent;
 use Illuminate\Http\StreamedEvent;
-use Illuminate\Support\Facades\Route;
 
+Route::get('/', function () {
+    return Inertia::render('chat');
+});
 Route::get('/chat', function () {
     $agent = new ChatAgent;
-    
+
     return response()->eventStream(function () use ($agent) {
         $agent
             ->onBeforeAction(function (string $tool, array $args, int $iteration) {
@@ -95,7 +217,7 @@ Route::get('/chat', function () {
                     data: ['text' => $response->text, 'iterations' => $iterations],
                 );
             });
-        
+
         // Use the streaming variant — yields propagate from callbacks
         yield from $agent->reactLoopStream(request()->input('message'));
     });
@@ -104,44 +226,90 @@ Route::get('/chat', function () {
 
 > **Important:** Use `reactLoopStream()` (not `reactLoop()`) inside `eventStream()` closures. The streaming variant is a Generator that propagates `yield` values from your callbacks. Without it, callback yields stay in their own scope and never reach the HTTP response.
 
-**Consume with JavaScript:**
+### Step 4: Create the Frontend
 
-```javascript
-const source = new EventSource('/chat?message=What+is+the+weather+in+Tokyo');
+Install the Laravel stream React hook:
 
-source.addEventListener('action', (e) => {
-    const data = JSON.parse(e.data);
-    if (data.status === 'calling') console.log(`🔧 Calling ${data.tool}...`);
-    if (data.status === 'complete') console.log(`✓ ${data.tool}: ${data.result}`);
-});
-
-source.addEventListener('complete', (e) => {
-    const data = JSON.parse(e.data);
-    console.log('✅', data.text);
-    source.close();
-});
-
-source.addEventListener('</stream>', () => source.close());
+```bash
+npm install @laravel/stream-react
 ```
 
-**Or with React** (`npm install @laravel/stream-react`):
+Create `resources/js/pages/chat.tsx`:
 
 ```tsx
-import { useEventStream } from '@laravel/stream-react';
+import { useEffect, useState } from "react";
 
-function Chat() {
-    const { message } = useEventStream('/chat?message=Hello');
-    return <div>{message}</div>;
+export default function Chat() {
+  const [actions, setActions] = useState<
+    { tool: string; status: string; result?: string }[]
+  >([]);
+  const [response, setResponse] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const eventSource = new EventSource(
+      "/chat?message=What+is+the+weather+in+Tokyo",
+    );
+
+    eventSource.addEventListener("action", (e) => {
+      const data = JSON.parse(e.data);
+      setActions((prev) => [...prev, data]);
+    });
+
+    eventSource.addEventListener("complete", (e) => {
+      const data = JSON.parse(e.data);
+      setResponse(data.text);
+      eventSource.close();
+    });
+
+    eventSource.onerror = (e) => {
+      console.error("EventSource error", e);
+      setError("Connection error");
+      eventSource.close();
+    };
+
+    return () => eventSource.close();
+  }, []);
+
+  return (
+    <div>
+      <h1>Chat</h1>
+
+      {actions.length > 0 && (
+        <div>
+          <h3>Tool calls:</h3>
+          {actions.map((a, i) => (
+            <div key={i}>
+              <strong>{a.tool}</strong> — {a.status}
+              {a.result && <pre>{a.result}</pre>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {response && (
+        <div>
+          <strong>Response:</strong> {response}
+        </div>
+      )}
+
+      {error && <div>Error: {error}</div>}
+
+      {!response && !error && <p>Loading...</p>}
+    </div>
+  );
 }
 ```
 
-For more streaming patterns, see the [**Tutorials**](#tutorials) section.
+Visit `http://localhost:8000` and you'll see your agent reason through the question, call the weather tool, and stream the final answer — all in real time.
+
+For more streaming patterns and complete examples, see the [**Tutorials**](#tutorials) section.
 
 ---
 
 ## ReAct Loop
 
-The ReAct (Reasoning + Acting) loop follows this cycle:
+The ReAct (Reasoning + Acting) loop gives your agent an autonomous think-act-observe cycle:
 
 ```
 User Goal
@@ -152,90 +320,66 @@ User Goal
   ↓
 [OBSERVATION] — Tool results fed back to the LLM
   ↓
-Goal finished? → No  → back to THOUGHT (with the observation)
+Goal finished? → No  → back to THOUGHT
                → Yes → LLM produces final answer
 ```
 
 **Example:** "What's the weather in Tokyo and should I bring an umbrella?"
 
-1. **Thought**: I need the current weather → calls `weather_api`
-2. **Action**: `weather_api(city: "Tokyo")` → Rain expected, 85%
-3. **Observation**: Tool result fed back to LLM
-4. **Thought**: Rain > 50%, recommend umbrella → no more tools needed
-5. **Final Answer**: "Yes, bring an umbrella."
+1. **Thought** — I need the current weather → calls `get_weather`
+2. **Action** — `get_weather(city: "Tokyo")` → Rain expected, 85%
+3. **Observation** — Tool result fed back to LLM
+4. **Thought** — Rain > 50%, recommend umbrella → no more tools needed
+5. **Final Answer** — "Yes, bring an umbrella."
 
-### Quick Start
-
-Add the `ReActLoop` trait to any Laravel AI SDK agent. Your agent must implement `HasTools` so the SDK registers your tools with the LLM provider:
+### Usage
 
 ```php
-<?php
-
-namespace App\Ai\Agents;
-
-use Laravel\Ai\Contracts\Agent;
-use Laravel\Ai\Contracts\HasTools;
-use Laravel\Ai\Promptable;
-use Laragentic\Loops\ReActLoop;
-
-class SalesCoach implements Agent, HasTools
-{
-    use Promptable, ReActLoop;
-
-    public function instructions(): string
-    {
-        return 'You are a sales coach who analyzes transcripts and provides feedback.';
-    }
-
-    public function tools(): iterable
-    {
-        return [new RetrievePreviousTranscripts];
-    }
-}
-```
-
-Then use the agentic loop:
-
-```php
-$result = (new SalesCoach)->reactLoop('Analyze this sales transcript...');
+// Basic
+$result = (new ChatAgent)->reactLoop('What is the weather in Tokyo?');
 
 echo $result->text();
-$conversationId = $result->conversationId;
 ```
 
-You can specify the provider and model per-call:
-
 ```php
-$result = (new SalesCoach)->reactLoop(
-    prompt: 'Analyze this transcript...',
+// With a specific provider and model
+$result = (new ChatAgent)->reactLoop(
+    prompt: 'What is the weather in Tokyo?',
     provider: 'anthropic',
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-5',
 );
 ```
 
 ### Configuration
 
+Override the max iterations per-call, in config, or via environment variables:
+
 ```php
 // Fluent API (per-call)
-$result = (new SalesCoach)
+$result = (new ChatAgent)
     ->maxIterations(5)
     ->reactLoop('Hello!');
+```
 
-// Config (config/agentic.php)
+```php
+// config/agentic.php
 'react' => [
     'max_iterations' => 10,
     'throw_on_max_iterations' => false,
 ],
+```
 
-// Environment variables
+```env
 AGENTIC_MAX_ITERATIONS=10
 AGENTIC_THROW_ON_MAX_ITERATIONS=false
 ```
 
-### ReAct Callbacks
+### Callbacks
+
+Hook into any phase of the loop. Callbacks are optional — the loop works perfectly without them.
 
 ```php
-$result = (new SalesCoach)
+$result = (new ChatAgent)
     ->onBeforeAction(function (string $tool, array $args, int $iteration) {
         broadcast(new ToolCallStarted($tool, $args));
     })
@@ -245,14 +389,14 @@ $result = (new SalesCoach)
     ->onObservation(function (string $observation, int $iteration) {
         broadcast(new ObservationReady($observation, $iteration));
     })
-    ->reactLoop('Analyze this transcript...');
+    ->reactLoop('What is the weather in Tokyo?');
 ```
 
-| Method                   | When                  | Parameters                                                  |
+| Callback                 | When it fires         | Parameters                                                  |
 | ------------------------ | --------------------- | ----------------------------------------------------------- |
 | `onLoopStart`            | Loop begins           | `string $prompt`                                            |
 | `onLoopComplete`         | Final answer produced | `AgentResponse $response, int $totalIterations`             |
-| `onMaxIterationsReached` | Limit hit             | `AgentResponse $response, int $totalIterations`             |
+| `onMaxIterationsReached` | Iteration limit hit   | `AgentResponse $response, int $totalIterations`             |
 | `onIterationStart`       | Each iteration starts | `int $iteration`                                            |
 | `onIterationEnd`         | Each iteration ends   | `int $iteration, AgentResponse $response`                   |
 | `onBeforeThought`        | Before LLM prompt     | `string $prompt, int $iteration`                            |
@@ -261,21 +405,25 @@ $result = (new SalesCoach)
 | `onAfterAction`          | After tool returns    | `string $tool, array $args, string $result, int $iteration` |
 | `onObservation`          | Observation ready     | `string $observation, int $iteration`                       |
 
-### ReAct Result
+### Result
+
+The `reactLoop()` method returns a `LoopResult` that wraps the final `AgentResponse` with loop metadata:
 
 ```php
-$result = (new SalesCoach)->reactLoop('Hello!');
+$result = (new ChatAgent)->reactLoop('Hello!');
 
 $result->text();               // Final response text
 $result->conversationId;       // Conversation ID
 $result->iterations;           // Total iterations executed
 $result->completed();          // true if LLM gave a final answer
-$result->reachedMaxIterations; // true if limit was hit
+$result->reachedMaxIterations; // true if iteration limit was hit
 $result->steps;                // Array of LoopStep objects
 $result->allToolCalls();       // All tool calls across all iterations
 ```
 
-### ReAct Customization
+### Customization
+
+Override these methods on your agent to customize loop behavior:
 
 ```php
 class MyAgent implements Agent, HasTools
@@ -294,7 +442,7 @@ class MyAgent implements Agent, HasTools
 
 ## Plan-Execute Loop
 
-The Plan-Execute loop separates planning from execution:
+The Plan-Execute loop separates planning from execution — ideal for complex, multi-step tasks:
 
 ```
 User Task
@@ -317,12 +465,12 @@ User Task
 - Work where you want visibility into the reasoning process
 - Scenarios where adaptive replanning adds resilience
 
-### Quick Start
+### Usage
 
 ```php
 <?php
 
-namespace App\Ai\Agents;
+namespace App\Agents;
 
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\HasTools;
@@ -345,8 +493,6 @@ class ResearchAgent implements Agent, HasTools
 }
 ```
 
-Then use the plan-execute loop:
-
 ```php
 $result = (new ResearchAgent)->planExecute(
     'Research Q4 sales data, analyze trends, and create an executive summary.',
@@ -356,9 +502,8 @@ echo $result->text();          // The synthesized final answer
 echo $result->stepsExecuted(); // Number of steps completed
 ```
 
-You can specify the provider and model per-call:
-
 ```php
+// With a specific provider and model
 $result = (new ResearchAgent)->planExecute(
     task: 'Research Q4 sales data, analyze trends, and create an executive summary.',
     provider: 'anthropic',
@@ -376,16 +521,19 @@ $result = (new ResearchAgent)
     ->allowReplan()
     ->maxReplans(2)
     ->planExecute('Analyze this data...');
+```
 
-// Config (config/agentic.php)
+```php
+// config/agentic.php
 'plan_execute' => [
     'max_steps' => 10,
     'allow_replan' => true,
     'max_replans' => 3,
     'throw_on_max_steps' => false,
 ],
+```
 
-// Environment variables
+```env
 AGENTIC_PLAN_MAX_STEPS=10
 AGENTIC_PLAN_ALLOW_REPLAN=true
 AGENTIC_PLAN_MAX_REPLANS=3
@@ -409,7 +557,7 @@ $result->wasReplanned(); // true if the plan was revised
 $result->replans;        // Number of times the plan was revised
 ```
 
-### Plan-Execute Callbacks
+### Callbacks
 
 ```php
 $result = (new ResearchAgent)
@@ -428,7 +576,7 @@ $result = (new ResearchAgent)
     ->planExecute('Create a marketing report...');
 ```
 
-| Method              | When                  | Parameters                                                                       |
+| Callback            | When it fires         | Parameters                                                                       |
 | ------------------- | --------------------- | -------------------------------------------------------------------------------- |
 | `onLoopStart`       | Loop begins           | `string $task`                                                                   |
 | `onLoopComplete`    | Synthesis done        | `AgentResponse $response, int $stepsExecuted`                                    |
@@ -440,7 +588,7 @@ $result = (new ResearchAgent)
 | `onAfterSynthesis`  | After synthesis       | `AgentResponse $response`                                                        |
 | `onMaxStepsReached` | Step limit hit        | `AgentResponse $lastResponse, int $stepsExecuted`                                |
 
-### Plan-Execute Result
+### Result
 
 ```php
 $result = (new ResearchAgent)->planExecute('Analyze trends');
@@ -457,7 +605,9 @@ $result->replans;             // Number of revisions
 $result->stepResults();       // [{step, description, result}, ...]
 ```
 
-### Plan-Execute Customization
+### Customization
+
+Override these methods on your agent to customize planning, execution, and synthesis:
 
 ```php
 class MyAgent implements Agent, HasTools
@@ -504,6 +654,25 @@ class MyAgent implements Agent, HasTools
 | **Token usage**  | Lower per-iteration                    | Higher (planning + steps + synthesis)  |
 | **Visibility**   | Per-iteration callbacks                | Per-step + plan + synthesis callbacks  |
 
+**Use both together** — an agent can `use ReActLoop, PlanExecuteLoop` and you choose which loop to call:
+
+```php
+class MyAgent implements Agent, HasTools
+{
+    use Promptable, ReActLoop, PlanExecuteLoop;
+
+    // ...
+}
+
+// Quick tool-driven question
+$result = (new MyAgent)->reactLoop('What is the weather in Tokyo?');
+
+// Complex multi-step task
+$result = (new MyAgent)->planExecute('Research Q4 sales and create a report.');
+```
+
+---
+
 ## Testing
 
 ### Unit Tests
@@ -543,18 +712,73 @@ ANTHROPIC_API_KEY=your-key-here
 composer test-coverage
 ```
 
+## Working Examples
+
+Want to see complete working code? Check out our **[Examples Repository](https://github.com/laragentic/laragentic-app-examples)** — a full Laravel application with:
+
+- ✅ ReAct Loop demo with streaming UI
+- ✅ Plan-Execute Loop demo with real-time progress
+- ✅ Complete chat agent with tools
+- ✅ Production-ready React frontends
+- ✅ Server-Sent Events (SSE) streaming
+- ✅ Ready to clone and run
+
+**[→ View Examples on GitHub](https://github.com/laragentic/laragentic-app-examples)**
+
 ## Tutorials
 
-Comprehensive streaming examples are available in the [`tutorial/`](tutorial/) folder:
+Comprehensive streaming examples and documentation are available in the [`tutorial/`](tutorial/) folder:
 
 - **[Complete Working Example](tutorial/complete-example.md)** — Ready-to-use chat agent with streaming, tools, and frontend code
 - **[Quick Reference](tutorial/quick-reference.md)** — Callback cheat sheet and essential streaming patterns
 - **[Streaming ReAct Loop](tutorial/streaming-react-loop.md)** — Stream real-time progress updates from ReAct loops
 - **[Streaming Plan-Execute Loop](tutorial/streaming-plan-execute-loop.md)** — Stream planning, execution, and synthesis progress
 
-These tutorials show how to use Laravel's streaming responses with the loop callbacks to provide real-time feedback to users. Perfect for building chat interfaces and long-running agentic tasks.
-
 > **Note:** The tutorial folder is excluded from production installs via `.gitattributes`.
+
+## 📚 New to PHP or Laravel?
+
+**[Code with PHP](https://codewithphp.com)** is a free, comprehensive learning platform I created to help developers master modern PHP and Laravel from first principles.
+
+🎯 **Learn by Building**: Create your own router, ORM, and MVC framework before touching Laravel  
+🚀 **Modern PHP 8.4**: Property hooks, asymmetric visibility, and latest features  
+💼 **Production-Ready**: PSR standards and real-world best practices  
+🔄 **Multiple Paths**: Dedicated series for TypeScript, Java, Python, and Ruby developers
+
+**Popular Series:**
+
+- **PHP Basics** — Master modern PHP from zero to building your own blog
+- **Build a CRM with Laravel 12** — Complete CRM system with authentication, teams, and pipelines
+- **AI/ML for PHP Developers** — Build intelligent applications with machine learning
+- **Claude for PHP Developers** — Integrate Claude AI into your applications
+
+[**Start Learning at codewithphp.com →**](https://codewithphp.com)
+
+---
+
+## Our Other Packages
+
+Explore our comprehensive suite of PHP packages for AI development:
+
+### 🤖 Agentic AI & Claude Integration
+
+- **[claude-php/claude-php-agent](https://github.com/claude-php/claude-php-agent)** — Comprehensive agentic framework with extensive agent types (ReAct, Plan-Execute, Reflection, Hierarchical, MAKER, and more), advanced patterns, MCP server integration, and detailed tutorials
+- **[claude-php/Claude-PHP-SDK](https://github.com/claude-php/Claude-PHP-SDK)** — PHP SDK for Claude with complete 1-for-1 functionality of the Official Python SDK, including tool use, vision, streaming, and batch processing
+- **[claude-php/Claude-PHP-SDK-Laravel](https://github.com/claude-php/Claude-PHP-SDK-Laravel)** — Official Laravel integration for the Claude PHP SDK with service providers, facades, and comprehensive documentation
+
+### 🔧 Developer Tools & Automation
+
+- **[dalehurley/phpbot](https://github.com/dalehurley/phpbot)** — PHP CLI AI assistant that turns natural-language requests into concrete actions with multi-tier routing, on-device Apple Intelligence support, and auto-created reusable skills
+- **[dalehurley/cross-vendor-dmf](https://github.com/dalehurley/cross-vendor-dmf)** — Cross-Vendor Dynamic Model Fusion (DMF) framework for vendor-agnostic AI orchestration using Claude Opus 4.5, OpenAI GPT-5.1, and Google Gemini 3 Pro
+
+### 🌐 Model Context Protocol (MCP)
+
+- **[dalehurley/php-mcp-sdk](https://github.com/dalehurley/php-mcp-sdk)** — PHP implementation of the Model Context Protocol (MCP) with complete MCP 2025-06-18 specification support, enabling seamless integration between LLM applications and external data sources
+- **[dalehurley/laravel-php-mcp-sdk](https://github.com/dalehurley/laravel-php-mcp-sdk)** — Comprehensive Laravel wrapper around the PHP MCP SDK with full MCP 2025-06-18 specification support, multiple transport types, and Laravel-native integration
+
+### 📚 Learning Resources
+
+- **[dalehurley/codewithphp](https://github.com/dalehurley/codewithphp)** — Comprehensive, open-source learning platform with tutorial-based resources for modern PHP development, featuring hands-on reproducible tutorials across multiple series including AI/ML, Laravel CRM, and more
 
 ## License
 

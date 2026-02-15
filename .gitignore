@@ -5,3 +5,4 @@
 composer.lock
 .env
 .DS_Store
+.cursor/rules/related-repositories.mdc
