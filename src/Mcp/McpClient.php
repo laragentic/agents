@@ -10,6 +10,7 @@ use Laragentic\Mcp\Exceptions\McpConnectionException;
 use Laragentic\Mcp\Exceptions\McpProtocolException;
 use Laragentic\Mcp\Exceptions\McpTimeoutException;
 use Laragentic\Mcp\Features\Prompts\PromptDefinition;
+use Laragentic\Mcp\Features\Elicitation\ElicitationHandler;
 use Laragentic\Mcp\Features\Prompts\PromptManager;
 use Laragentic\Mcp\Features\Resources\ResourceContents;
 use Laragentic\Mcp\Features\Resources\ResourceManager;
@@ -56,6 +57,8 @@ class McpClient
 
     private SamplingHandler $samplingHandler;
 
+    private ElicitationHandler $elicitationHandler;
+
     private PingHandler $pingHandler;
 
     private ProgressTracker $progressTracker;
@@ -89,6 +92,7 @@ class McpClient
         $this->promptManager = new PromptManager($this);
         $this->rootsProvider = new RootsProvider($this);
         $this->samplingHandler = new SamplingHandler($this);
+        $this->elicitationHandler = new ElicitationHandler($this);
         $this->pingHandler = new PingHandler($this);
         $this->progressTracker = new ProgressTracker($this);
         $this->cancellationManager = new CancellationManager($this);
@@ -282,6 +286,14 @@ class McpClient
     }
 
     /**
+     * Get the elicitation handler.
+     */
+    public function elicitation(): ElicitationHandler
+    {
+        return $this->elicitationHandler;
+    }
+
+    /**
      * Get the ping handler.
      */
     public function ping(): PingHandler
@@ -450,7 +462,7 @@ class McpClient
                 'ping' => $this->pingHandler->handlePing($message),
                 'roots/list' => $this->rootsProvider->handleList($message),
                 'sampling/createMessage' => $this->samplingHandler->handleRequest($message),
-                'elicitation/create' => new \stdClass, // TODO: Elicitation handler
+                'elicitation/create' => $this->elicitationHandler->handleRequest($message),
                 default => throw new McpProtocolException("Unknown server request: {$message->method}"),
             };
 
