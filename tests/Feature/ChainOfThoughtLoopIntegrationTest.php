@@ -58,7 +58,11 @@ test('solves simple math problem in one iteration', function () {
 
     $result = $agent
         ->maxReasoningIterations(5)
-        ->chainOfThought('What is 15% of 200?');
+        ->chainOfThought(
+            prompt: 'What is 15% of 200?',
+            provider: 'anthropic',
+            model: 'claude-opus-4-6'
+        );
 
     expect($result)->toBeInstanceOf(CoTResult::class);
     expect($result->reasoningIterations)->toBeLessThanOrEqual(3);
@@ -72,7 +76,9 @@ test('uses tool calls to gather information during reasoning', function () {
     $result = $agent
         ->maxReasoningIterations(5)
         ->chainOfThought(
-            'A book costs $25 with a 20% discount. What is the final price after discount?'
+            prompt: 'A book costs $25 with a 20% discount. What is the final price after discount?',
+            provider: 'anthropic',
+            model: 'claude-opus-4-6'
         );
 
     expect($result->reasoningIterations)->toBeGreaterThan(0);
@@ -97,8 +103,10 @@ test('iterates multiple times for complex reasoning', function () {
         });
 
     $result = $agent->chainOfThought(
-        'If a train travels 120 miles in 2 hours, and another train travels 180 miles in 3 hours, '
-        . 'which train is faster and by how much (in mph)?'
+        prompt: 'If a train travels 120 miles in 2 hours, and another train travels 180 miles in 3 hours, '
+            . 'which train is faster and by how much (in mph)?',
+        provider: 'anthropic',
+        model: 'claude-opus-4-6'
     );
 
     expect($result->completed())->toBeTrue();
@@ -115,7 +123,11 @@ test('expresses confidence when solution is clear', function () {
 
     $result = $agent
         ->maxReasoningIterations(4)
-        ->chainOfThought('What is 2 + 2?');
+        ->chainOfThought(
+            prompt: 'What is 2 + 2?',
+            provider: 'anthropic',
+            model: 'claude-opus-4-6'
+        );
 
     expect($result->completed())->toBeTrue();
 
@@ -141,8 +153,10 @@ test('handles multi-step reasoning with tool usage', function () {
         });
 
     $result = $agent->chainOfThought(
-        'A store has 150 items. They sell 40% on Monday and 30% of the remaining on Tuesday. '
-        . 'How many items are left?'
+        prompt: 'A store has 150 items. They sell 40% on Monday and 30% of the remaining on Tuesday. '
+            . 'How many items are left?',
+        provider: 'anthropic',
+        model: 'claude-opus-4-6'
     );
 
     expect($result->completed())->toBeTrue();
@@ -173,7 +187,11 @@ test('callbacks fire during real execution', function () {
             $events[] = 'complete';
         });
 
-    $result = $agent->chainOfThought('What is 10 divided by 2?');
+    $result = $agent->chainOfThought(
+        prompt: 'What is 10 divided by 2?',
+        provider: 'anthropic',
+        model: 'claude-opus-4-6'
+    );
 
     expect($events)->toContain('start');
     expect($events)->toContain('complete');
@@ -187,7 +205,9 @@ test('respects max iterations limit in real execution', function () {
     $result = $agent
         ->maxReasoningIterations(2)
         ->chainOfThought(
-            'Analyze the philosophical implications of artificial intelligence on human consciousness.'
+            prompt: 'Analyze the philosophical implications of artificial intelligence on human consciousness.',
+            provider: 'anthropic',
+            model: 'claude-opus-4-6'
         );
 
     // With only 2 iterations, complex philosophical question may not complete
@@ -203,7 +223,11 @@ test('works with conversation context', function () {
     // First question
     $result1 = $agent
         ->maxReasoningIterations(4)
-        ->chainOfThought('What is 15 times 4?');
+        ->chainOfThought(
+            prompt: 'What is 15 times 4?',
+            provider: 'anthropic',
+            model: 'claude-opus-4-6'
+        );
 
     expect($result1->completed())->toBeTrue();
     expect($result1->text())->toContain('60');
@@ -211,7 +235,11 @@ test('works with conversation context', function () {
     // Should be able to call again (each call is independent without RemembersConversations)
     $result2 = $agent
         ->maxReasoningIterations(4)
-        ->chainOfThought('What is 20 times 3?');
+        ->chainOfThought(
+            prompt: 'What is 20 times 3?',
+            provider: 'anthropic',
+            model: 'claude-opus-4-6'
+        );
 
     expect($result2->completed())->toBeTrue();
     expect($result2->text())->toContain('60');
