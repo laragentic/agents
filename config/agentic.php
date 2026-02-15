@@ -166,4 +166,82 @@ return [
 
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Agent Skills Configuration
+    |--------------------------------------------------------------------------
+    |
+    | These options control the Agent Skills System which allows agents to
+    | dynamically load specialized instructions and resources based on the
+    | task at hand. Following the agentskills.io specification.
+    |
+    */
+
+    'skills' => [
+
+        /*
+        |--------------------------------------------------------------------------
+        | Enable Skills System
+        |--------------------------------------------------------------------------
+        |
+        | When true, agents can use the HasAgentSkills trait to load and
+        | resolve skills. When false, skill-related methods are disabled.
+        |
+        */
+
+        'enabled' => (bool) env('AGENTIC_SKILLS_ENABLED', true),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Skills Base Path
+        |--------------------------------------------------------------------------
+        |
+        | The directory where skill folders are stored. Each skill should be
+        | in its own subdirectory with a SKILL.md file and optional scripts/,
+        | references/, and assets/ subdirectories.
+        |
+        */
+
+        'path' => env('AGENTIC_SKILLS_PATH', app_path('Skills')),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Auto-Resolution Enabled
+        |--------------------------------------------------------------------------
+        |
+        | When true, agents will automatically resolve and load relevant skills
+        | based on the query content. When false, skills must be manually loaded
+        | via ->withSkill() or ->withSkills().
+        |
+        */
+
+        'auto_resolve' => (bool) env('AGENTIC_SKILLS_AUTO_RESOLVE', false),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Resolution Threshold
+        |--------------------------------------------------------------------------
+        |
+        | The minimum relevance score (0.0 - 1.0) required for a skill to be
+        | auto-loaded. Higher values are more selective, lower values are more
+        | inclusive. Typical range: 0.2 - 0.5.
+        |
+        */
+
+        'resolution_threshold' => (float) env('AGENTIC_SKILLS_THRESHOLD', 0.3),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Resolution Limit
+        |--------------------------------------------------------------------------
+        |
+        | The maximum number of skills to auto-load for a single query. This
+        | prevents context overload by limiting the number of active skills.
+        |
+        */
+
+        'resolution_limit' => (int) env('AGENTIC_SKILLS_LIMIT', 3),
+
+    ],
+
 ];
