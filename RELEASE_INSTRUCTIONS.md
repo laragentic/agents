@@ -30,15 +30,27 @@ git show v0.2.0 --no-patch
 
 ## Next Steps (Requires Push Access)
 
-### 1. Push the Tag
+### 1. Create and Push the Tag
 
-First, fetch the tag if working from a fresh clone:
-```bash
-git fetch origin refs/tags/v0.2.0:refs/tags/v0.2.0
-```
+The tag needs to be created on the main branch at commit 293b37c. You can create it using the release notes file:
 
-Or if you have the tag locally, push it:
 ```bash
+# Ensure you're on the main branch and up to date
+git checkout main
+git pull origin main
+
+# Create the annotated tag using the release notes
+# Note: The first line of RELEASE_NOTES_v0.2.0.md serves as the title
+git tag -a v0.2.0 293b37c -m "$(cat RELEASE_NOTES_v0.2.0.md)"
+
+# Or create with a shorter message:
+git tag -a v0.2.0 293b37c -m "v0.2.0 - Agent Skills System
+
+This release introduces a comprehensive Agent Skills System following the agentskills.io specification.
+
+See RELEASE_NOTES_v0.2.0.md for full details."
+
+# Push the tag to GitHub
 git push origin v0.2.0
 ```
 
