@@ -1,0 +1,52 @@
+---
+description: Developer experience principles and usage patterns for Laragentic
+alwaysApply: true
+---
+
+# Developer Experience (DX) Principles
+
+## Primary Goal
+
+A developer already using the Laravel AI SDK should be able to add agentic behavior with **one `use` statement and zero configuration changes**.
+
+## Minimal Setup Example
+
+```php
+class SalesCoach implements Agent, Conversational
+{
+    use Promptable, RemembersConversations, ReActLoop;
+
+    public function instructions(): string
+    {
+        return 'You are a sales coach...';
+    }
+}
+```
+
+## Fluent Usage
+
+```php
+// Simple
+$result = (new SalesCoach)->forUser($user)->reactLoop('Hello!');
+
+// With overrides and streaming callbacks
+$result = (new SalesCoach)
+    ->forUser($user)
+    ->maxIterations(5)
+    ->onAfterAction(fn ($tool, $args, $result, $i) => broadcast(...))
+    ->onObservation(fn ($observation, $i) => logger()->info($observation))
+    ->reactLoop('Analyze this transcript...');
+
+$conversationId = $result->conversationId;
+```
+
+## DX Rules
+
+1. **Zero config required** — sensible defaults, works out of the box
+2. **Trait-based** — `use ReActLoop` is all you add to an existing agent
+3. **Fluent API** — all configuration via chainable methods
+4. **Familiar patterns** — follow Laravel AI SDK naming exactly
+5. **Return AI SDK types** — `LoopResult` wraps `AgentResponse` transparently
+6. **Callbacks are optional** — loops work perfectly with zero callbacks
+7. **Progressive disclosure** — simple things are simple, complex things are possible
+8. **Overridable internals** — `formatObservation()` and `loopShouldTerminate()` can be customized per-agent

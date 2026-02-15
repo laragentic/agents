@@ -1,0 +1,151 @@
+---
+description: Use only the latest AI models from all providers (updated Feb 2026)
+alwaysApply: true
+---
+
+# Latest AI Models (February 2026)
+
+When writing code that integrates with AI providers, ALWAYS use the most recent model versions listed below. This ensures access to the latest capabilities, performance improvements, and features.
+
+## Provider Models
+
+### Anthropic
+- **Latest Model**: `claude-opus-4-6`
+- Released: February 5, 2026
+- Context: 1M tokens (beta), 128K output
+- Use for: Complex reasoning, autonomous agents, large codebases, multi-step tasks
+- Pricing: $5/M input, $25/M output
+
+### OpenAI
+- **Latest Model**: `gpt-5.2`
+- Released: December 11, 2025
+- Variants: `gpt-5.2-instant`, `gpt-5.2-thinking`, `gpt-5.2-pro`
+- Context: 400K tokens, 128K output
+- Use for: General intelligence, reasoning, professional knowledge work, long-running agents
+
+### Google (Gemini)
+- **Latest Models**: 
+  - `gemini-3-pro` - Most intelligent, complex multimodal tasks
+  - `gemini-3-flash` - Fast, balanced for speed and scale
+  - `gemini-3-deep-think` - Specialized reasoning for science/research
+- Released: 2026
+- Context: 1,048,576 tokens
+- Use for: Multimodal understanding (text, images, video, audio, PDFs), structured outputs, code execution
+
+### Cohere
+- **Latest Model**: `command-a`
+- Released: March 2025
+- Parameters: 111B
+- Context: 256K tokens
+- Use for: Enterprise tasks, tool use, RAG, agents, multilingual applications
+
+### Mistral AI
+- **Latest Models**:
+  - `mistral-large-3` - Flagship model (41B active params, 675B total with MoE)
+  - `magistral` - Reasoning with transparent multilingual reasoning
+  - `medium-3` - Enterprise-focused, cost-efficient
+  - `devstral-2` - Code agent for software engineering
+- Released: December 2025
+- Context: 256K tokens
+- Use for: Open-weight deployments, code generation, multilingual tasks
+
+### xAI (Grok)
+- **Latest Model**: `grok-4.1`
+- Variants: `grok-4.1-fast` (non-reasoning), `grok-4.1-thinking` (reasoning)
+- Released: November 2025
+- Context: 2M tokens
+- Use for: Creative writing, real-time search integration, emotional intelligence
+- Pricing: $0.20/M input, $0.50/M output
+
+### ElevenLabs (Audio/TTS)
+- **Latest Models**:
+  - `eleven-v3` - Most expressive TTS (70+ languages, audio tags, multi-speaker dialogue)
+  - `eleven-turbo-v2.5` - Low latency, 32 languages (3x faster)
+  - `scribe-v2` - Transcription (90+ languages)
+- Released: January-February 2026
+- Use for: Video/audiobook narration, conversational AI, transcription
+
+### Jina AI (Embeddings)
+- **Latest Model**: `jina-embeddings-v4`
+- Released: June 2025
+- Parameters: 3.8B
+- Use for: Multimodal embeddings (text + images), visually rich content, semantic search, code search
+
+### Voyage AI (Embeddings)
+- **Latest Models**:
+  - `voyage-4-large` - Flagship with MoE architecture (40% lower cost)
+  - `voyage-4` - Mid-sized efficiency
+  - `voyage-4-lite` - Optimized for latency/cost
+  - `voyage-4-nano` - Open-weight (Apache 2.0)
+  - `voyage-multimodal-3.5` - Text/image/video retrieval
+- Released: January 2026
+- Context: 32K tokens
+- Dimensions: 256, 512, 1024, or 2048
+- Use for: Document retrieval, asymmetric retrieval patterns, video search
+
+## Code Examples
+
+### Laravel AI SDK Configuration
+
+```php
+// config/ai.php
+return [
+    'default' => 'anthropic',
+    
+    'drivers' => [
+        'anthropic' => [
+            'key' => env('ANTHROPIC_API_KEY'),
+            'model' => 'claude-opus-4-6', // Latest model
+        ],
+        
+        'openai' => [
+            'key' => env('OPENAI_API_KEY'),
+            'model' => 'gpt-5.2', // Latest model
+        ],
+        
+        'gemini' => [
+            'key' => env('GEMINI_API_KEY'),
+            'model' => 'gemini-3-pro', // Latest model
+        ],
+    ],
+];
+```
+
+### Agent Implementation
+
+```php
+use Laravel\Ai\Agent;
+use Laravel\Ai\Promptable;
+
+class MyAgent implements Agent
+{
+    use Promptable;
+    
+    public function model(): string
+    {
+        // Use latest models based on provider
+        return match($this->driver()) {
+            'anthropic' => 'claude-opus-4-6',
+            'openai' => 'gpt-5.2',
+            'gemini' => 'gemini-3-pro',
+            'cohere' => 'command-a',
+            'mistral' => 'mistral-large-3',
+            'xai' => 'grok-4.1',
+            default => throw new \InvalidArgumentException('Unknown provider'),
+        };
+    }
+}
+```
+
+## Important Notes
+
+- **Always verify**: Check provider documentation for the absolute latest model names and availability
+- **Context windows**: These models have massive context windows (400K-2M tokens) - leverage them fully
+- **Reasoning modes**: Many providers now offer "thinking" or "reasoning" variants - use for complex problems
+- **Multimodal**: Most latest models support text, images, video, and audio natively
+- **Cost optimization**: Use smaller/faster variants (flash, lite, turbo) for high-volume, low-latency tasks
+- **Open weights**: Mistral Large 3 and Voyage 4 Nano are open-weight (Apache 2.0) for self-hosting
+
+## Last Updated
+
+February 15, 2026

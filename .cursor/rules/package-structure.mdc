@@ -1,0 +1,45 @@
+---
+description: Directory structure and file organization conventions for the Laragentic package
+alwaysApply: true
+---
+
+# Package Structure
+
+```
+laragentic/
+├── src/
+│   ├── Loops/
+│   │   ├── ReActLoop.php              # ReAct loop trait (core)
+│   │   ├── LoopResult.php             # Wraps AgentResponse with loop metadata
+│   │   └── LoopStep.php               # Single iteration value object
+│   ├── Concerns/
+│   │   └── HasCallbacks.php           # Lifecycle callback registration trait
+│   ├── Contracts/
+│   │   └── Loop.php                   # Loop contract/interface
+│   ├── Exceptions/
+│   │   └── MaxIterationsExceededException.php
+│   └── LaragenticServiceProvider.php
+├── config/
+│   └── agentic.php                    # Package configuration
+├── tests/
+│   ├── Unit/Loops/
+│   ├── Feature/
+│   ├── Pest.php
+│   └── TestCase.php
+├── .cursor/rules/                     # AI assistant rules
+├── composer.json
+├── phpunit.xml
+├── LICENSE
+└── README.md
+```
+
+## Conventions
+
+- **Loop traits** that agents `use` go in `src/Loops/` (e.g. `ReActLoop`)
+- **Supporting traits** (e.g. `HasCallbacks`) go in `src/Concerns/`
+- **Value objects** for loop data (`LoopResult`, `LoopStep`) live alongside their loop in `src/Loops/`
+- **Contracts/interfaces** go in `src/Contracts/`
+- **Exceptions** go in `src/Exceptions/`
+- Mirror the Laravel AI SDK naming style: traits are verbs/nouns (`RemembersConversations`), contracts are interfaces
+- The service provider registers config and any bindings
+- Tests mirror the `src/` structure under `tests/`

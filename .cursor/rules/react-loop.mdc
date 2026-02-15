@@ -1,0 +1,72 @@
+---
+description: ReAct loop implementation design and pattern details
+globs: src/Loops/**/*.php
+alwaysApply: false
+---
+
+# ReAct Loop Implementation
+
+## Pattern
+
+The ReAct (Reasoning + Acting) loop follows this cycle:
+
+```
+User Goal
+  ↓
+[THOUGHT]     — LLM reasons about what to do next
+  ↓
+[ACTION]      — LLM calls one or more tools
+  ↓
+[OBSERVATION] — Tool results fed back to the LLM
+  ↓
+Goal finished? → No  → back to THOUGHT (with the observation)
+               → Yes → LLM produces final answer
+```
+
+The observation is the **checkpoint** — the LLM receives the tool results and decides whether the user's goal is satisfied or if more action is needed.
+
+## Example
+
+Goal: "What's the weather in Tokyo and should I bring an umbrella?"
+
+1. **Thought**: I need the current weather → calls `weather_api`
+2. **Action**: `weather_api(city: "Tokyo")` → `Rain expected, 85% probability`
+3. **Observation**: Tool result fed back to LLM
+4. **Thought**: Rain > 50%, recommend umbrella → no more tool calls
+5. **Final Answer**: "Yes, bring an umbrella."
+
+## Loop Flow in Code
+
+```php
+while ($iteration < $maxIterations) {
+    // THOUGHT: LLM reasons (prompt includes observation from last iteration)
+    $response = $this->prompt($currentPrompt);
+
+    // Goal satisfied? (no tool calls = final answer)
+    if ($response->toolCalls->isEmpty()) return $response;
+
+    // ACTION: Execute each tool the LLM requested
+    $records = $this->executeLoopToolCalls($response, $iteration);
+
+    // OBSERVATION: Format results and feed back to LLM
+    $observation = $this->formatObservation($records);
+    $currentPrompt = $observation; // becomes next iteration's prompt
+}
+```
+
+## Key Design Points
+
+- `formatObservation()` is **overridable** — agents can customize how tool results are presented to the LLM
+- `loopShouldTerminate()` is **overridable** — agents can implement custom goal-completion logic beyond "no tool calls"
+- The observation string explicitly instructs the LLM to evaluate whether the goal is met
+- Each `LoopStep` stores the `observation` for introspection
+
+## Callbacks (Thought/Action/Observation)
+
+| Callback | Phase | Receives |
+|---|---|---|
+| `onBeforeThought` | Before LLM reasons | `string $prompt, int $iteration` |
+| `onAfterThought` | After LLM responds | `AgentResponse $response, int $iteration` |
+| `onBeforeAction` | Before tool execution | `string $tool, array $args, int $iteration` |
+| `onAfterAction` | After tool returns | `string $tool, array $args, string $result, int $iteration` |
+| `onObservation` | Observation ready | `string $observation, int $iteration` |

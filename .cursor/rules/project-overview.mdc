@@ -1,0 +1,29 @@
+---
+description: Laragentic package overview, purpose, and architectural vision
+alwaysApply: true
+---
+
+# Laragentic - Project Overview
+
+Laragentic is a Laravel package that **extends** the official [Laravel AI SDK](https://laravel.com/docs/12.x/ai-sdk) (`laravel/ai`) by providing agentic loops and other agentic AI capabilities.
+
+## Purpose
+
+The Laravel AI SDK provides agents, tools, streaming, conversations, and structured output — but it does **not** provide autonomous agent loops (e.g. ReAct, Plan-and-Execute). This package fills that gap by adding:
+
+- **Agentic loops** (starting with `ReActLoop`) that let agents autonomously reason, act, and observe in iterative cycles
+- **Lifecycle callbacks** so developers can hook into every step of the loop (e.g. streaming progress to users)
+- **Configurable iteration limits** to prevent runaway loops
+- Future agentic patterns (Plan-and-Execute, reflection, multi-agent orchestration)
+
+## Key Principle
+
+This package **does not replace or duplicate** the Laravel AI SDK. It composes on top of it. Agents still implement `Laravel\Ai\Contracts\Agent`, use `Laravel\Ai\Promptable`, and follow all existing Laravel AI SDK conventions. Laragentic adds traits and classes that enhance those agents with agentic behavior.
+
+## Package Identity
+
+- **Composer package**: `laragentic/agents`
+- **Root namespace**: `Laragentic`
+- **Minimum PHP**: 8.2
+- **Minimum Laravel**: 12.x
+- **Required dependency**: `laravel/ai`

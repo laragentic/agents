@@ -1,0 +1,57 @@
+---
+description: Testing conventions and patterns for the Laragentic package
+globs: tests/**/*.php
+alwaysApply: false
+---
+
+# Testing Conventions
+
+## Framework
+
+- **Pest PHP** for test authoring (Laravel ecosystem standard)
+- **PHPUnit** as the underlying runner
+- Tests live in `tests/` mirroring `src/` structure
+
+## Structure
+
+```
+tests/
+├── Unit/
+│   ├── Loops/
+│   │   └── ReActLoopTest.php
+│   └── Callbacks/
+│       └── LoopCallbacksTest.php
+├── Feature/
+│   └── ReActLoopIntegrationTest.php
+└── TestCase.php
+```
+
+## Principles
+
+- Test the **public API** — the trait methods developers call
+- Mock the Laravel AI SDK's `prompt()` to return controlled `AgentResponse` objects with/without tool calls
+- Test loop termination: final answer, max iterations, exceptions
+- Test callback invocation: verify each lifecycle hook fires with correct arguments
+- Test fluent configuration: `maxIterations()`, `onBeforeToolCall()`, etc.
+
+## Mocking AI Responses
+
+The Laravel AI SDK provides `Ai::fake()` for testing. Use it:
+
+```php
+use Laravel\Ai\Facades\Ai;
+
+Ai::fake([
+    AgentResponse::make('I need to search...', toolCalls: [...]),
+    AgentResponse::make('Here is my final answer.'),
+]);
+```
+
+## What to Test
+
+- Loop iterates correct number of times based on tool calls
+- Callbacks fire in the correct order with correct arguments
+- Max iteration limit is respected
+- Config values are read and applied
+- Exceptions propagate correctly
+- Works with both `RemembersConversations` and manual `messages()` agents

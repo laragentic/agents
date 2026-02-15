@@ -1,0 +1,65 @@
+---
+description: Lifecycle callback system design for agentic loops
+globs: src/Callbacks/**/*.php,src/Concerns/**/*.php,src/Loops/**/*.php
+alwaysApply: false
+---
+
+# Callback / Lifecycle Hooks System
+
+## Purpose
+
+Developers hook into every step of the ReAct loop to stream progress updates to users, log activity, or implement custom abort logic.
+
+## Callbacks by Phase
+
+### Loop-Level
+| Callback | When | Receives |
+|---|---|---|
+| `onLoopStart` | Loop begins | `string $prompt` |
+| `onLoopComplete` | Final answer produced | `AgentResponse $response, int $totalIterations` |
+| `onMaxIterationsReached` | Limit hit | `AgentResponse $response, int $totalIterations` |
+
+### Iteration-Level
+| Callback | When | Receives |
+|---|---|---|
+| `onIterationStart` | Each iteration begins | `int $iteration` |
+| `onIterationEnd` | Each iteration ends | `int $iteration, AgentResponse $response` |
+
+### Thought (LLM Reasoning)
+| Callback | When | Receives |
+|---|---|---|
+| `onBeforeThought` | Before LLM prompt | `string $prompt, int $iteration` |
+| `onAfterThought` | After LLM responds | `AgentResponse $response, int $iteration` |
+
+### Action (Tool Execution)
+| Callback | When | Receives |
+|---|---|---|
+| `onBeforeAction` | Before tool call | `string $toolName, array $arguments, int $iteration` |
+| `onAfterAction` | After tool returns | `string $toolName, array $arguments, string $result, int $iteration` |
+
+### Observation (Results Fed Back)
+| Callback | When | Receives |
+|---|---|---|
+| `onObservation` | Observation ready | `string $observation, int $iteration` |
+
+## Registration API
+
+```php
+$result = (new SalesCoach)
+    ->onBeforeAction(function (string $tool, array $args, int $iteration) {
+        broadcast(new ToolCallStarted($tool, $args));
+    })
+    ->onObservation(function (string $observation, int $iteration) {
+        broadcast(new ObservationReady($observation));
+    })
+    ->onLoopComplete(function (AgentResponse $response, int $iterations) {
+        logger()->info("Completed in {$iterations} iterations");
+    })
+    ->reactLoop('Analyze this transcript...');
+```
+
+## Rules
+
+- Each `on*` method returns `$this` for fluent chaining
+- Callbacks are observers — they MUST NOT alter the loop flow
+- Callbacks are optional — loops work identically with zero callbacks registered

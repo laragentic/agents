@@ -1,0 +1,2 @@
+# Exclude tutorial folder from production installs
+/tutorial export-ignore

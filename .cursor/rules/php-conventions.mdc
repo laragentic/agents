@@ -1,0 +1,42 @@
+---
+description: PHP and Laravel coding conventions for the Laragentic package
+globs: "**/*.php"
+alwaysApply: false
+---
+
+# PHP & Laravel Conventions
+
+## General
+
+- **PHP 8.2+** — use constructor promotion, enums, readonly properties, named arguments, union/intersection types, `match`, first-class callables
+- **Strict types** — every PHP file starts with `declare(strict_types=1);`
+- **PSR-12** coding style with Laravel conventions (PER-CS 2.0)
+- **PSR-4** autoloading: `Laragentic\` maps to `src/`
+
+## Naming
+
+- Classes: `PascalCase` (e.g. `ReActLoop`, `LoopCallbacks`)
+- Methods: `camelCase` (e.g. `reactLoop`, `onBeforeToolCall`)
+- Traits: named as capabilities/behaviors (e.g. `HasCallbacks`, `ReActLoop`)
+- Interfaces: named as nouns (e.g. `Loop`) in `Contracts/`
+- Config keys: `snake_case` (e.g. `max_iterations`)
+
+## Type Safety
+
+- All method parameters and return types must be explicitly typed
+- Use `void` return type when method returns nothing
+- Prefer value objects / DTOs over associative arrays for structured data
+- Use enums for fixed sets of values
+
+## DocBlocks
+
+- Only add docblocks when they provide information beyond the type signature
+- Always document `@throws` for methods that throw exceptions
+- Use `@param` and `@return` only when types can't express the full picture (e.g. generics)
+
+## Laravel Package Conventions
+
+- Service provider extends `Illuminate\Support\ServiceProvider`
+- Config published via `vendor:publish` with a tag
+- No facades unless genuinely needed — prefer dependency injection and traits
+- Follow `laravel/ai` patterns as closely as possible for consistency

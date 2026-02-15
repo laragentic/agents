@@ -1,0 +1,46 @@
+---
+description: How Laragentic integrates with and extends the Laravel AI SDK
+alwaysApply: true
+---
+
+# Laravel AI SDK Integration
+
+## Core AI SDK Concepts We Build On
+
+The Laravel AI SDK (`laravel/ai`) provides:
+
+- **`Laravel\Ai\Contracts\Agent`** — interface all agents implement
+- **`Laravel\Ai\Contracts\Conversational`** — interface for agents with conversation history
+- **`Laravel\Ai\Promptable`** — trait providing `prompt()`, `stream()`, `queue()`, etc.
+- **`Laravel\Ai\Concerns\RemembersConversations`** — auto-stores conversation history
+- **`Laravel\Ai\Contracts\Tool`** — interface for tools agents can call
+- **`Laravel\Ai\Responses\AgentResponse`** — response from `prompt()`, contains `->text`, `->toolCalls`, `->usage`, `->conversationId`
+- **`Laravel\Ai\Responses\StreamedAgentResponse`** — streamed response variant
+
+## How We Extend (Not Replace)
+
+Laragentic traits are **composed alongside** existing AI SDK traits:
+
+```php
+class SalesCoach implements Agent, Conversational
+{
+    use Promptable, RemembersConversations; // Laravel AI SDK
+    use ReActLoop;                          // Laragentic
+}
+```
+
+The `ReActLoop` trait adds a `reactLoop()` method (or enhances `prompt()`) that internally calls the agent's existing `prompt()` method in a loop, inspecting tool calls and observations.
+
+## Key Integration Points
+
+- **Tool calls**: The AI SDK returns tool calls in `AgentResponse->toolCalls`. Our loops inspect these to decide whether to continue iterating.
+- **Conversation context**: We leverage the existing `messages()` / `RemembersConversations` to maintain context across loop iterations.
+- **Streaming**: We hook into the AI SDK's streaming infrastructure when possible.
+- **Response objects**: We return or wrap the AI SDK's response types — never invent parallel response types.
+
+## Rules
+
+- NEVER duplicate functionality that exists in `laravel/ai`
+- ALWAYS use `laravel/ai` response types, tool interfaces, and agent contracts
+- When the AI SDK evolves, our traits should remain compatible
+- Import from `Laravel\Ai\*` namespaces, not recreate them
