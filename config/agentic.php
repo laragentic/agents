@@ -166,4 +166,103 @@ return [
 
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | MAKER Loop Configuration
+    |--------------------------------------------------------------------------
+    |
+    | These options control the default behavior of the MAKER (Massively
+    | Decomposed Agentic Processes with first-to-ahead-by-K Error correction
+    | and Red-flagging) loop. MAKER achieves near-zero error rates through
+    | task decomposition, multi-agent voting, and uncertainty detection.
+    |
+    */
+
+    'maker' => [
+
+        /*
+        |--------------------------------------------------------------------------
+        | Voting K Parameter
+        |--------------------------------------------------------------------------
+        |
+        | The "first-to-ahead-by-K" threshold for consensus. The first answer
+        | to achieve a lead of K votes wins. Higher K means more reliable but
+        | slower execution.
+        |
+        | Recommended values:
+        | - K=2: Fast, moderate reliability (3-5 votes)
+        | - K=3: Balanced (default, 5-7 votes)
+        | - K=4: Very reliable but slow (7-9 votes)
+        |
+        */
+
+        'voting_k' => (int) env('AGENTIC_MAKER_VOTING_K', 3),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Enable Red-Flagging
+        |--------------------------------------------------------------------------
+        |
+        | When true, the loop detects linguistic markers of uncertainty
+        | (e.g., "wait, maybe", "let me reconsider") and circular reasoning
+        | patterns. Responses with red flags are discarded and retried.
+        |
+        */
+
+        'enable_red_flagging' => (bool) env('AGENTIC_MAKER_RED_FLAGGING', true),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Maximum Decomposition Depth
+        |--------------------------------------------------------------------------
+        |
+        | The maximum recursion depth for task decomposition. This prevents
+        | infinite decomposition loops. Tasks at this depth are executed
+        | atomically regardless of complexity.
+        |
+        */
+
+        'max_decomposition_depth' => (int) env('AGENTIC_MAKER_MAX_DEPTH', 10),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Maximum Iterations
+        |--------------------------------------------------------------------------
+        |
+        | The maximum total steps (decompositions + executions + compositions)
+        | before stopping. This prevents runaway loops and controls token
+        | consumption.
+        |
+        */
+
+        'max_iterations' => (int) env('AGENTIC_MAKER_MAX_ITERATIONS', 100),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Throw on Max Iterations
+        |--------------------------------------------------------------------------
+        |
+        | When true, a MaxIterationsExceededException will be thrown if the
+        | loop reaches the maximum iteration count. When false, the last
+        | result will be returned instead.
+        |
+        */
+
+        'throw_on_max_iterations' => (bool) env('AGENTIC_MAKER_THROW_ON_MAX', false),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Maximum Votes
+        |--------------------------------------------------------------------------
+        |
+        | Safety cap for maximum votes per decision. Prevents pathological
+        | cases where consensus is never reached from consuming excessive
+        | tokens. After this many votes, the most voted answer wins.
+        |
+        */
+
+        'max_votes' => (int) env('AGENTIC_MAKER_MAX_VOTES', 7), // Reduced from 15 for speed
+
+    ],
+
 ];

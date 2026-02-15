@@ -26,7 +26,7 @@ function makeCoTResponse(string $text, array $toolCalls = []): AgentResponse
     if (! empty($toolCalls)) {
         $response->toolCalls = new Collection(
             array_map(
-                fn (array $tc) => new ToolCall(
+                fn(array $tc) => new ToolCall(
                     id: $tc['id'] ?? 'tc-' . uniqid(),
                     name: $tc['name'],
                     arguments: $tc['arguments'] ?? [],

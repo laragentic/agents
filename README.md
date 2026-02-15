@@ -51,14 +51,14 @@ The Laravel AI SDK gives you agents, tools, streaming, and conversations. But wh
 
 Laragentic adds that missing piece:
 
-| What you get                 | What it does                                                         |
-| ---------------------------- | -------------------------------------------------------------------- |
-| **ReAct Loop**               | Think → call tools → observe results → repeat until done             |
-| **Plan-Execute Loop**        | Create a plan → execute each step → synthesize a final answer        |
-| **Chain-of-Thought Loop**    | Reason iteratively → evaluate understanding → continue until confident|
-| **Lifecycle Callbacks**      | Hook into every phase to stream progress, log, or broadcast          |
-| **Configurable Limits**      | Set max iterations/steps to control cost and prevent runaway loops   |
-| **Adaptive Replanning**      | The Plan-Execute loop revises its plan mid-execution if a step fails |
+| What you get              | What it does                                                           |
+| ------------------------- | ---------------------------------------------------------------------- |
+| **ReAct Loop**            | Think → call tools → observe results → repeat until done               |
+| **Plan-Execute Loop**     | Create a plan → execute each step → synthesize a final answer          |
+| **Chain-of-Thought Loop** | Reason iteratively → evaluate understanding → continue until confident |
+| **Lifecycle Callbacks**   | Hook into every phase to stream progress, log, or broadcast            |
+| **Configurable Limits**   | Set max iterations/steps to control cost and prevent runaway loops     |
+| **Adaptive Replanning**   | The Plan-Execute loop revises its plan mid-execution if a step fails   |
 
 **Zero configuration required.** Add `use ReActLoop` to your agent, call `->reactLoop()`, and it works.
 
@@ -829,14 +829,14 @@ class MyAgent implements Agent, HasTools
 
 ## Choosing a Loop
 
-|                  | ReAct Loop                             | Plan-Execute Loop                      | Chain-of-Thought Loop                  |
-| ---------------- | -------------------------------------- | -------------------------------------- | -------------------------------------- |
-| **Pattern**      | Thought → Action → Observation         | Plan → Execute Steps → Synthesize      | Reasoning → Self-Eval → Confidence     |
-| **Best for**     | Tool-driven tasks, real-time reasoning | Multi-step workflows, sequential tasks | Deep analysis, progressive reasoning   |
-| **Tool calls**   | Each iteration may call tools          | Each step may call tools               | Each iteration may call tools          |
-| **Adaptiveness** | Continuous (every iteration)           | Optional replanning on failure         | Continuous self-reflection             |
-| **Token usage**  | Lower per-iteration                    | Higher (planning + steps + synthesis)  | Medium (iterative reasoning)           |
-| **Visibility**   | Per-iteration callbacks                | Per-step + plan + synthesis callbacks  | Per-iteration + reflection callbacks   |
+|                  | ReAct Loop                             | Plan-Execute Loop                      | Chain-of-Thought Loop                |
+| ---------------- | -------------------------------------- | -------------------------------------- | ------------------------------------ |
+| **Pattern**      | Thought → Action → Observation         | Plan → Execute Steps → Synthesize      | Reasoning → Self-Eval → Confidence   |
+| **Best for**     | Tool-driven tasks, real-time reasoning | Multi-step workflows, sequential tasks | Deep analysis, progressive reasoning |
+| **Tool calls**   | Each iteration may call tools          | Each step may call tools               | Each iteration may call tools        |
+| **Adaptiveness** | Continuous (every iteration)           | Optional replanning on failure         | Continuous self-reflection           |
+| **Token usage**  | Lower per-iteration                    | Higher (planning + steps + synthesis)  | Medium (iterative reasoning)         |
+| **Visibility**   | Per-iteration callbacks                | Per-step + plan + synthesis callbacks  | Per-iteration + reflection callbacks |
 
 **When to use each:**
 

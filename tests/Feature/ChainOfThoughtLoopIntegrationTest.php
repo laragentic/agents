@@ -25,8 +25,8 @@ class CoTIntegrationAgent implements Agent, HasTools
     public function instructions(): string
     {
         return 'You are a problem-solving expert. Use Chain-of-Thought reasoning to analyze '
-             . 'problems systematically. Evaluate your understanding and express confidence '
-             . 'when you have a complete solution. If you need calculations, use the calculator tool.';
+            . 'problems systematically. Evaluate your understanding and express confidence '
+            . 'when you have a complete solution. If you need calculations, use the calculator tool.';
     }
 
     public function tools(): iterable
@@ -98,7 +98,7 @@ test('iterates multiple times for complex reasoning', function () {
 
     $result = $agent->chainOfThought(
         'If a train travels 120 miles in 2 hours, and another train travels 180 miles in 3 hours, '
-        . 'which train is faster and by how much (in mph)?'
+            . 'which train is faster and by how much (in mph)?'
     );
 
     expect($result->completed())->toBeTrue();
@@ -125,8 +125,8 @@ test('expresses confidence when solution is clear', function () {
     // Check for confidence markers in reasoning
     $allReasoning = strtolower(implode(' ', $result->reasoningSteps()));
     $hasConfidence = str_contains($allReasoning, 'confident') ||
-                     str_contains($allReasoning, 'final answer') ||
-                     str_contains($allReasoning, 'clear');
+        str_contains($allReasoning, 'final answer') ||
+        str_contains($allReasoning, 'clear');
 
     expect($hasConfidence)->toBeTrue();
 })->group('integration');
@@ -142,7 +142,7 @@ test('handles multi-step reasoning with tool usage', function () {
 
     $result = $agent->chainOfThought(
         'A store has 150 items. They sell 40% on Monday and 30% of the remaining on Tuesday. '
-        . 'How many items are left?'
+            . 'How many items are left?'
     );
 
     expect($result->completed())->toBeTrue();

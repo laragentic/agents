@@ -85,7 +85,7 @@ class CoTResult
     public function reasoningSteps(): array
     {
         return array_map(
-            fn (CoTStep $step) => $step->reasoning(),
+            fn(CoTStep $step) => $step->reasoning(),
             $this->steps
         );
     }
@@ -100,7 +100,7 @@ class CoTResult
     public function stepSummaries(): array
     {
         return array_map(
-            fn (CoTStep $step) => $step->summary(),
+            fn(CoTStep $step) => $step->summary(),
             $this->steps
         );
     }
