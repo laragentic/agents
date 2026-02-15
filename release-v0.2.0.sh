@@ -34,8 +34,8 @@ if [ "$TAG_EXISTS" = false ]; then
     echo "   git pull origin main"
     echo "   git tag -a $TAG_NAME $COMMIT_SHA -m \"$TAG_TITLE"
     echo ""
-    echo "This release introduces a comprehensive Agent Skills System."
-    echo "See RELEASE_NOTES_v0.2.0.md for full details.\""
+    echo "   This release introduces a comprehensive Agent Skills System."
+    echo "   See RELEASE_NOTES_v0.2.0.md for full details.\""
     echo ""
 fi
 
