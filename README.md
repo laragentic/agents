@@ -34,7 +34,38 @@ php artisan vendor:publish --tag=agentic-config
 
 Agentic loops can take time to complete. Stream real-time progress to users using Laravel's [Event Streams (SSE)](https://laravel.com/docs/12.x/responses#event-streams-sse) with loop callbacks.
 
-Each loop trait provides a streaming variant — `reactLoopStream()` and `planExecuteStream()` — that returns a Generator. Callback `yield` values propagate to the parent Generator, making them compatible with `response()->eventStream()`:
+Each loop trait provides a streaming variant — `reactLoopStream()` and `planExecuteStream()` — that returns a Generator. Callback `yield` values propagate to the parent Generator, making them compatible with `response()->eventStream()`.
+
+**First, create a `ChatAgent`** — a standard Laravel AI SDK agent with the `ReActLoop` trait:
+
+```php
+<?php
+
+namespace App\Agents;
+
+use App\Ai\Tools\WeatherTool;
+use Laravel\Ai\Contracts\Agent;
+use Laravel\Ai\Contracts\HasTools;
+use Laravel\Ai\Promptable;
+use Laragentic\Loops\ReActLoop;
+
+class ChatAgent implements Agent, HasTools
+{
+    use Promptable, ReActLoop;
+
+    public function instructions(): string
+    {
+        return 'You are a helpful assistant that can answer questions and use tools.';
+    }
+
+    public function tools(): iterable
+    {
+        return [new WeatherTool];
+    }
+}
+```
+
+**Then stream its progress** via an SSE route:
 
 ```php
 use App\Agents\ChatAgent;
