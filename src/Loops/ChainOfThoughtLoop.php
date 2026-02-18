@@ -5,11 +5,10 @@ declare(strict_types=1);
 namespace Laragentic\Loops;
 
 use Closure;
-use Laragentic\Concerns\HasCallbacks;
+use Laragentic\Concerns\ExecutesLoopTools;
+use Laragentic\Concerns\HasIterationCallbacks;
 use Laragentic\Exceptions\MaxIterationsExceededException;
-use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Responses\AgentResponse;
-use Laravel\Ai\Tools\Request;
 
 /**
  * Adds a Chain-of-Thought (CoT) reasoning loop to any Laravel AI SDK agent.
@@ -46,50 +45,15 @@ use Laravel\Ai\Tools\Request;
  */
 trait ChainOfThoughtLoop
 {
-    use HasCallbacks;
+    use HasIterationCallbacks;
+    use ExecutesLoopTools;
 
     /**
      * The maximum number of reasoning iterations for this agent instance.
      */
     protected ?int $maxCoTIterations = null;
 
-    // ─── CoT Callback Registration ──────────────────────────────────
-
-    /**
-     * Register a callback invoked when the max reasoning iteration limit is reached.
-     *
-     * Receives: (AgentResponse $response, int $totalIterations)
-     */
-    public function onMaxIterationsReached(Closure $callback): static
-    {
-        $this->loopCallbacks['maxIterationsReached'][] = $callback;
-
-        return $this;
-    }
-
-    /**
-     * Register a callback for the start of each reasoning iteration.
-     *
-     * Receives: (int $iteration)
-     */
-    public function onIterationStart(Closure $callback): static
-    {
-        $this->loopCallbacks['iterationStart'][] = $callback;
-
-        return $this;
-    }
-
-    /**
-     * Register a callback for the end of each reasoning iteration.
-     *
-     * Receives: (int $iteration, AgentResponse $response)
-     */
-    public function onIterationEnd(Closure $callback): static
-    {
-        $this->loopCallbacks['iterationEnd'][] = $callback;
-
-        return $this;
-    }
+    // ─── CoT-Specific Callback Registration ─────────────────────────
 
     /**
      * Register a callback invoked before the LLM reasons (before prompt).
@@ -111,30 +75,6 @@ trait ChainOfThoughtLoop
     public function onAfterReasoning(Closure $callback): static
     {
         $this->loopCallbacks['afterReasoning'][] = $callback;
-
-        return $this;
-    }
-
-    /**
-     * Register a callback invoked before executing a tool.
-     *
-     * Receives: (string $toolName, array $arguments, int $iteration)
-     */
-    public function onBeforeAction(Closure $callback): static
-    {
-        $this->loopCallbacks['beforeAction'][] = $callback;
-
-        return $this;
-    }
-
-    /**
-     * Register a callback invoked after a tool returns its result.
-     *
-     * Receives: (string $toolName, array $arguments, string $result, int $iteration)
-     */
-    public function onAfterAction(Closure $callback): static
-    {
-        $this->loopCallbacks['afterAction'][] = $callback;
 
         return $this;
     }
@@ -334,106 +274,6 @@ trait ChainOfThoughtLoop
         }
 
         return false;
-    }
-
-    /**
-     * Format tool call results into an observation string.
-     *
-     * The observation is fed back to the LLM in the next iteration,
-     * allowing it to incorporate the information into its reasoning.
-     *
-     * Override this method to customize how observations are presented.
-     *
-     * @param  array<int, array{tool: string, arguments: array<string, mixed>, result: string}>  $toolCallRecords
-     */
-    protected function formatObservation(array $toolCallRecords): string
-    {
-        $parts = [];
-
-        foreach ($toolCallRecords as $record) {
-            $parts[] = "[{$record['tool']}]: {$record['result']}";
-        }
-
-        return implode("\n", $parts);
-    }
-
-    /**
-     * Execute all tool calls from the LLM response, firing lifecycle
-     * callbacks before and after each call.
-     *
-     * @return array<int, array{tool: string, arguments: array<string, mixed>, result: string}>
-     */
-    protected function executeLoopToolCalls(AgentResponse $response, int $iteration): array
-    {
-        $tools = $this->resolveToolMap();
-        $records = [];
-
-        foreach ($response->toolCalls as $toolCall) {
-            $toolName = $toolCall->name;
-            $arguments = $toolCall->arguments;
-
-            $this->fireCallbacks('beforeAction', $toolName, $arguments, $iteration);
-
-            $result = $this->executeLoopTool($tools, $toolName, $arguments);
-
-            $this->fireCallbacks('afterAction', $toolName, $arguments, $result, $iteration);
-
-            $records[] = [
-                'tool' => $toolName,
-                'arguments' => $arguments,
-                'result' => $result,
-            ];
-        }
-
-        return $records;
-    }
-
-    /**
-     * Execute a single tool by name with the given arguments.
-     *
-     * Tools receive a Laravel\Ai\Tools\Request instance, matching the
-     * signature defined by the Laravel\Ai\Contracts\Tool interface.
-     */
-    protected function executeLoopTool(array $tools, string $toolName, array $arguments): string
-    {
-        $tool = $tools[$toolName] ?? null;
-
-        if ($tool === null) {
-            return "Error: Tool '{$toolName}' not found.";
-        }
-
-        try {
-            return (string) $tool->handle(new Request($arguments));
-        } catch (\Throwable $e) {
-            return "Error executing tool '{$toolName}': {$e->getMessage()}";
-        }
-    }
-
-    /**
-     * Build a name-keyed map of available tools from the agent.
-     *
-     * Follows the Laravel AI SDK convention: uses $tool->name() if the
-     * method exists, otherwise falls back to the class basename.
-     *
-     * @return array<string, Tool>
-     */
-    protected function resolveToolMap(): array
-    {
-        $tools = [];
-
-        if (method_exists($this, 'tools')) {
-            foreach ($this->tools() as $tool) {
-                if ($tool instanceof Tool) {
-                    $name = method_exists($tool, 'name')
-                        ? call_user_func([$tool, 'name'])
-                        : class_basename($tool);
-
-                    $tools[$name] = $tool;
-                }
-            }
-        }
-
-        return $tools;
     }
 
     /**

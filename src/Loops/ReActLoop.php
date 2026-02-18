@@ -5,11 +5,10 @@ declare(strict_types=1);
 namespace Laragentic\Loops;
 
 use Closure;
-use Laragentic\Concerns\HasCallbacks;
+use Laragentic\Concerns\ExecutesLoopTools;
+use Laragentic\Concerns\HasIterationCallbacks;
 use Laragentic\Exceptions\MaxIterationsExceededException;
-use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Responses\AgentResponse;
-use Laravel\Ai\Tools\Request;
 
 /**
  * Adds a ReAct (Reasoning + Acting) agentic loop to any Laravel AI SDK agent.
@@ -47,50 +46,15 @@ use Laravel\Ai\Tools\Request;
  */
 trait ReActLoop
 {
-    use HasCallbacks;
+    use HasIterationCallbacks;
+    use ExecutesLoopTools;
 
     /**
      * The maximum number of loop iterations for this agent instance.
      */
     protected ?int $maxLoopIterations = null;
 
-    // ─── ReAct Callback Registration ────────────────────────────────
-
-    /**
-     * Register a callback invoked when the max iteration limit is reached.
-     *
-     * Receives: (AgentResponse $response, int $totalIterations)
-     */
-    public function onMaxIterationsReached(Closure $callback): static
-    {
-        $this->loopCallbacks['maxIterationsReached'][] = $callback;
-
-        return $this;
-    }
-
-    /**
-     * Register a callback for the start of each iteration.
-     *
-     * Receives: (int $iteration)
-     */
-    public function onIterationStart(Closure $callback): static
-    {
-        $this->loopCallbacks['iterationStart'][] = $callback;
-
-        return $this;
-    }
-
-    /**
-     * Register a callback for the end of each iteration.
-     *
-     * Receives: (int $iteration, AgentResponse $response)
-     */
-    public function onIterationEnd(Closure $callback): static
-    {
-        $this->loopCallbacks['iterationEnd'][] = $callback;
-
-        return $this;
-    }
+    // ─── ReAct-Specific Callback Registration ────────────────────────
 
     /**
      * Register a callback invoked before the LLM reasons (before prompt).
@@ -112,30 +76,6 @@ trait ReActLoop
     public function onAfterThought(Closure $callback): static
     {
         $this->loopCallbacks['afterThought'][] = $callback;
-
-        return $this;
-    }
-
-    /**
-     * Register a callback invoked before executing a tool.
-     *
-     * Receives: (string $toolName, array $arguments, int $iteration)
-     */
-    public function onBeforeAction(Closure $callback): static
-    {
-        $this->loopCallbacks['beforeAction'][] = $callback;
-
-        return $this;
-    }
-
-    /**
-     * Register a callback invoked after a tool returns its result.
-     *
-     * Receives: (string $toolName, array $arguments, string $result, int $iteration)
-     */
-    public function onAfterAction(Closure $callback): static
-    {
-        $this->loopCallbacks['afterAction'][] = $callback;
 
         return $this;
     }
@@ -239,7 +179,7 @@ trait ReActLoop
             // back to the LLM on the next iteration. The LLM will then
             // evaluate whether the user's goal has been met.
 
-            $observation = $this->formatObservation($toolCallRecords);
+            $observation = $this->buildReActObservation($toolCallRecords);
 
             $this->fireCallbacks('observation', $observation, $iteration);
 
@@ -298,107 +238,23 @@ trait ReActLoop
     }
 
     /**
-     * Format tool call results into an observation string.
+     * Build the full observation prompt fed back to the LLM after tool execution.
      *
-     * The observation is fed back to the LLM as the prompt for the next
-     * iteration, allowing it to reason about the results and decide
-     * whether the user's goal has been met.
+     * Wraps formatObservation() with ReAct-specific guidance that instructs the
+     * LLM to evaluate whether the user's goal has been satisfied or if more
+     * tool calls are needed.
      *
-     * Override this method to customize how observations are presented.
+     * Override this method to customize the full observation prompt, or override
+     * formatObservation() to customize only the tool result formatting.
      *
      * @param  array<int, array{tool: string, arguments: array<string, mixed>, result: string}>  $toolCallRecords
      */
-    protected function formatObservation(array $toolCallRecords): string
+    protected function buildReActObservation(array $toolCallRecords): string
     {
-        $parts = [];
-
-        foreach ($toolCallRecords as $record) {
-            $parts[] = "[{$record['tool']}]: {$record['result']}";
-        }
-
-        return "Observation:\n" . implode("\n", $parts)
+        return "Observation:\n" . $this->formatObservation($toolCallRecords)
             . "\n\nBased on the observation above, continue working toward the user's goal. "
             . 'If the goal is fully satisfied, provide a final answer. '
             . 'If more information is needed, use the available tools.';
-    }
-
-    /**
-     * Execute all tool calls from the LLM response, firing lifecycle
-     * callbacks before and after each call.
-     *
-     * @return array<int, array{tool: string, arguments: array<string, mixed>, result: string}>
-     */
-    protected function executeLoopToolCalls(AgentResponse $response, int $iteration): array
-    {
-        $tools = $this->resolveToolMap();
-        $records = [];
-
-        foreach ($response->toolCalls as $toolCall) {
-            $toolName = $toolCall->name;
-            $arguments = $toolCall->arguments;
-
-            $this->fireCallbacks('beforeAction', $toolName, $arguments, $iteration);
-
-            $result = $this->executeLoopTool($tools, $toolName, $arguments);
-
-            $this->fireCallbacks('afterAction', $toolName, $arguments, $result, $iteration);
-
-            $records[] = [
-                'tool' => $toolName,
-                'arguments' => $arguments,
-                'result' => $result,
-            ];
-        }
-
-        return $records;
-    }
-
-    /**
-     * Execute a single tool by name with the given arguments.
-     *
-     * Tools receive a Laravel\Ai\Tools\Request instance, matching the
-     * signature defined by the Laravel\Ai\Contracts\Tool interface.
-     */
-    protected function executeLoopTool(array $tools, string $toolName, array $arguments): string
-    {
-        $tool = $tools[$toolName] ?? null;
-
-        if ($tool === null) {
-            return "Error: Tool '{$toolName}' not found.";
-        }
-
-        try {
-            return (string) $tool->handle(new Request($arguments));
-        } catch (\Throwable $e) {
-            return "Error executing tool '{$toolName}': {$e->getMessage()}";
-        }
-    }
-
-    /**
-     * Build a name-keyed map of available tools from the agent.
-     *
-     * Follows the Laravel AI SDK convention: uses $tool->name() if the
-     * method exists, otherwise falls back to the class basename.
-     *
-     * @return array<string, Tool>
-     */
-    protected function resolveToolMap(): array
-    {
-        $tools = [];
-
-        if (method_exists($this, 'tools')) {
-            foreach ($this->tools() as $tool) {
-                if ($tool instanceof Tool) {
-                    $name = method_exists($tool, 'name')
-                        ? call_user_func([$tool, 'name'])
-                        : class_basename($tool);
-
-                    $tools[$name] = $tool;
-                }
-            }
-        }
-
-        return $tools;
     }
 
     /**
@@ -494,7 +350,7 @@ trait ReActLoop
             }
 
             // ── OBSERVATION ─────────────────────────────────────────
-            $observation = $this->formatObservation($toolCallRecords);
+            $observation = $this->buildReActObservation($toolCallRecords);
 
             yield from $this->fireStreamCallbacks('observation', $observation, $iteration);
 
