@@ -9,9 +9,13 @@ use Laravel\Ai\Responses\Data\ToolCall;
 use Laravel\Ai\Responses\Data\Usage;
 use Laragentic\Exceptions\MaxIterationsExceededException;
 use Laragentic\Loops\LoopResult;
+use Laragentic\Signals\AskHumanSignal;
+use Laragentic\Signals\HumanQuestion;
+use Laragentic\Signals\QuestionType;
 use Laragentic\Tests\Fixtures\AdditionTool;
 use Laragentic\Tests\Fixtures\FailingTool;
 use Laragentic\Tests\Fixtures\TestAgent;
+use Laragentic\Tools\AskHumanTool;
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -531,4 +535,172 @@ test('LoopStep identifies final answer vs tool call iterations', function () {
     expect($result->steps[1]->hasToolCalls())->toBeFalse();
     expect($result->steps[1]->isFinalAnswer())->toBeTrue();
     expect($result->steps[1]->hasObservation())->toBeFalse();
+});
+
+// ─── AskHuman ────────────────────────────────────────────────────────
+
+test('loop terminates immediately when LLM calls ask_human with a free-text question', function () {
+    $agent = makeAgent()
+        ->withTools([new AskHumanTool])
+        ->fakeResponses([
+            // LLM calls ask_human tool — no second iteration follows
+            makeResponse('I need more information.', [
+                ['name' => 'ask_human', 'arguments' => ['mode' => 'free_text', 'question' => 'What city should I check?']],
+            ]),
+            // This response must NOT be reached
+            makeResponse('Final answer that should not appear.'),
+        ]);
+
+    $result = $agent->reactLoop('What is the weather?');
+
+    expect($result)->toBeInstanceOf(LoopResult::class);
+    expect($result->askedHuman())->toBeTrue();
+    expect($result->completed())->toBeFalse();
+    expect($result->reachedMaxIterations)->toBeFalse();
+    expect($result->iterations)->toBe(1);
+    expect($agent->getPromptCallCount())->toBe(1);
+});
+
+test('askHumanSignal on result contains the free-text question', function () {
+    $agent = makeAgent()
+        ->withTools([new AskHumanTool])
+        ->fakeResponses([
+            makeResponse('Need input.', [
+                ['name' => 'ask_human', 'arguments' => ['mode' => 'free_text', 'question' => 'What is your budget?']],
+            ]),
+        ]);
+
+    $result = $agent->reactLoop('Help me plan.');
+
+    expect($result->askHumanSignal)->toBeInstanceOf(AskHumanSignal::class);
+    expect($result->askHumanSignal->isStructured())->toBeFalse();
+    expect($result->askHumanSignal->getFreeTextQuestion())->toBe('What is your budget?');
+});
+
+test('askHumanSignal on result contains structured questions', function () {
+    $agent = makeAgent()
+        ->withTools([new AskHumanTool])
+        ->fakeResponses([
+            makeResponse('Need structured input.', [
+                ['name' => 'ask_human', 'arguments' => [
+                    'mode' => 'structured',
+                    'questions' => [
+                        ['type' => 'single_choice', 'question' => 'Timeline?', 'options' => ['1 week', '1 month', '3 months']],
+                        ['type' => 'multiple_choice', 'question' => 'Features?', 'options' => ['Auth', 'Payments']],
+                        ['type' => 'free_text', 'question' => 'Anything else?'],
+                    ],
+                ]],
+            ]),
+        ]);
+
+    $result = $agent->reactLoop('Set up my project.');
+
+    expect($result->askHumanSignal->isStructured())->toBeTrue();
+    $questions = $result->askHumanSignal->getQuestions();
+    expect($questions)->toHaveCount(3);
+    expect($questions[0]->type)->toBe(QuestionType::SingleChoice);
+    expect($questions[0]->options)->toBe(['1 week', '1 month', '3 months']);
+    expect($questions[1]->type)->toBe(QuestionType::MultipleChoice);
+    expect($questions[2]->type)->toBe(QuestionType::FreeText);
+});
+
+test('onAskHuman callback fires with the signal and iteration number', function () {
+    $capturedSignal = null;
+    $capturedIteration = null;
+
+    $agent = makeAgent()
+        ->withTools([new AskHumanTool])
+        ->fakeResponses([
+            makeResponse('Need input.', [
+                ['name' => 'ask_human', 'arguments' => ['mode' => 'free_text', 'question' => 'What city?']],
+            ]),
+        ])
+        ->onAskHuman(function (AskHumanSignal $signal, int $iteration) use (&$capturedSignal, &$capturedIteration) {
+            $capturedSignal = $signal;
+            $capturedIteration = $iteration;
+        });
+
+    $agent->reactLoop('Check weather.');
+
+    expect($capturedSignal)->toBeInstanceOf(AskHumanSignal::class);
+    expect($capturedSignal->getFreeTextQuestion())->toBe('What city?');
+    expect($capturedIteration)->toBe(1);
+});
+
+test('onAskHuman fires after any regular tool calls in the same iteration', function () {
+    $events = [];
+
+    $agent = makeAgent()
+        ->withTools([new AdditionTool, new AskHumanTool])
+        ->fakeResponses([
+            makeResponse('Adding then asking.', [
+                ['name' => 'add_numbers', 'arguments' => ['a' => 1, 'b' => 2]],
+                ['name' => 'ask_human', 'arguments' => ['mode' => 'free_text', 'question' => 'Continue?']],
+            ]),
+        ])
+        ->onAfterAction(function (string $tool) use (&$events) {
+            $events[] = "action:{$tool}";
+        })
+        ->onAskHuman(function () use (&$events) {
+            $events[] = 'askHuman';
+        });
+
+    $result = $agent->reactLoop('Do stuff.');
+
+    // add_numbers ran, then ask_human was detected, then callback fired
+    expect($events)->toBe(['action:add_numbers', 'action:ask_human', 'askHuman']);
+    expect($result->askedHuman())->toBeTrue();
+});
+
+test('loop does not call onLoopComplete when terminated by AskHuman', function () {
+    $loopCompleted = false;
+
+    $agent = makeAgent()
+        ->withTools([new AskHumanTool])
+        ->fakeResponses([
+            makeResponse('Asking.', [
+                ['name' => 'ask_human', 'arguments' => ['mode' => 'free_text', 'question' => 'What?']],
+            ]),
+        ])
+        ->onLoopComplete(function () use (&$loopCompleted) {
+            $loopCompleted = true;
+        });
+
+    $agent->reactLoop('Test.');
+
+    expect($loopCompleted)->toBeFalse();
+});
+
+test('askedHuman() is false for a normally completed loop', function () {
+    $agent = makeAgent()->fakeResponses([
+        makeResponse('Done.'),
+    ]);
+
+    $result = $agent->reactLoop('Hello.');
+
+    expect($result->askedHuman())->toBeFalse();
+    expect($result->askHumanSignal)->toBeNull();
+    expect($result->completed())->toBeTrue();
+});
+
+test('AskHumanSignal toArray() returns expected structure for frontend use', function () {
+    $agent = makeAgent()
+        ->withTools([new AskHumanTool])
+        ->fakeResponses([
+            makeResponse('Asking.', [
+                ['name' => 'ask_human', 'arguments' => [
+                    'mode' => 'structured',
+                    'questions' => [
+                        ['type' => 'single_choice', 'question' => 'Size?', 'options' => ['S', 'M', 'L']],
+                    ],
+                ]],
+            ]),
+        ]);
+
+    $result = $agent->reactLoop('Order something.');
+    $arr = $result->askHumanSignal->toArray();
+
+    expect($arr['mode'])->toBe('structured');
+    expect($arr['questions'][0]['type'])->toBe('single_choice');
+    expect($arr['questions'][0]['options'])->toBe(['S', 'M', 'L']);
 });

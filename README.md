@@ -1134,6 +1134,112 @@ return response()->eventStream(function () use ($agent) {
 
 ---
 
+## Asking the Human for Clarification
+
+Any loop can pause mid-execution and ask the human for input by registering the built-in `AskHumanTool`. When the LLM determines it needs clarification, it calls this tool with the questions it wants to ask — structured however it sees fit. The loop detects the signal, fires `onAskHuman`, and terminates immediately without a second LLM call.
+
+### Setup
+
+Add `AskHumanTool` to your agent's tools:
+
+```php
+use Laragentic\Tools\AskHumanTool;
+
+class MyAgent implements Agent
+{
+    use Promptable, ReActLoop;
+
+    public function tools(): iterable
+    {
+        return [
+            new AskHumanTool(),   // <-- give the LLM the ability to ask
+            new WeatherTool(),
+            // ...
+        ];
+    }
+}
+```
+
+### Handling the Signal
+
+```php
+use Laragentic\Signals\AskHumanSignal;
+
+$result = (new MyAgent)
+    ->onAskHuman(function (AskHumanSignal $signal, int $iteration) {
+        // Fires immediately when the LLM calls ask_human.
+        // Use this to broadcast to your frontend, store pending state, etc.
+        broadcast(new HumanInputRequired($signal->toArray()));
+    })
+    ->reactLoop('What should I wear today?');
+
+// Check which outcome occurred
+if ($result->askedHuman()) {
+    // Return the questions to the frontend as JSON
+    return response()->json($result->askHumanSignal->toArray());
+}
+
+if ($result->completed()) {
+    return response()->json(['answer' => $result->text()]);
+}
+```
+
+### Question Modes
+
+The LLM decides at runtime what questions to ask and in what format. You never write question code — the `AskHumanTool` schema teaches the LLM its options.
+
+**Free-text** (default — for open-ended input):
+
+```
+// LLM sends: {"mode": "free_text", "question": "What city should I check?"}
+```
+
+**Structured** (when the LLM knows the shape of the answer):
+
+```
+// LLM sends:
+{
+  "mode": "structured",
+  "questions": [
+    {"type": "single_choice",   "question": "Preferred unit?",  "options": ["Celsius", "Fahrenheit"]},
+    {"type": "multiple_choice", "question": "Features needed?", "options": ["Auth", "Payments", "Notifications"]},
+    {"type": "free_text",       "question": "Any other preferences?"}
+  ]
+}
+```
+
+The `AskHumanSignal::toArray()` payload your frontend receives:
+
+```php
+// Free-text
+[
+    'mode'      => 'free_text',
+    'question'  => 'What city should I check?',
+    'questions' => [],
+]
+
+// Structured
+[
+    'mode'      => 'structured',
+    'question'  => null,
+    'questions' => [
+        ['type' => 'single_choice',   'question' => 'Preferred unit?',  'options' => ['Celsius', 'Fahrenheit']],
+        ['type' => 'multiple_choice', 'question' => 'Features needed?', 'options' => ['Auth', 'Payments', 'Notifications']],
+        ['type' => 'free_text',       'question' => 'Any other preferences?', 'options' => []],
+    ],
+]
+```
+
+### Key Behaviours
+
+- `onAskHuman` fires; `onLoopComplete` does **not** fire (these are mutually exclusive)
+- `$result->askedHuman()` returns `true`; `$result->completed()` returns `false`
+- `$result->askHumanSignal` holds the full `AskHumanSignal` object
+- No second LLM call is made — the loop exits cleanly after firing the callback
+- Works identically on all three loops: `reactLoop`, `chainOfThought`, and `planExecute`
+
+---
+
 ## Choosing a Loop
 
 |                  | ReAct Loop                             | Plan-Execute Loop                      | Chain-of-Thought Loop                  |

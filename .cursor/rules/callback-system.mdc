@@ -18,6 +18,7 @@ Developers hook into every step of the ReAct loop to stream progress updates to 
 | `onLoopStart` | Loop begins | `string $prompt` |
 | `onLoopComplete` | Final answer produced | `AgentResponse $response, int $totalIterations` |
 | `onMaxIterationsReached` | Limit hit | `AgentResponse $response, int $totalIterations` |
+| `onAskHuman` | LLM called `ask_human` tool — loop paused | `AskHumanSignal $signal, int $iteration` |
 
 ### Iteration-Level
 | Callback | When | Receives |
@@ -42,6 +43,45 @@ Developers hook into every step of the ReAct loop to stream progress updates to 
 |---|---|---|
 | `onObservation` | Observation ready | `string $observation, int $iteration` |
 
+## AskHuman Callback
+
+`onAskHuman` fires when the LLM calls the `ask_human` tool. The loop terminates immediately after — **no second LLM iteration occurs** and `onLoopComplete` does NOT fire.
+
+Check `$result->askedHuman()` after the loop to branch on this outcome:
+
+```php
+$result = (new MyAgent)
+    ->onAskHuman(function (AskHumanSignal $signal, int $iteration) {
+        // Signal carries questions the LLM structured at runtime.
+        // Broadcast to your frontend — can be free-text or structured.
+        broadcast(new HumanInputRequired($signal->toArray()));
+    })
+    ->reactLoop('What should I wear today?');
+
+if ($result->askedHuman()) {
+    // $result->askHumanSignal is the AskHumanSignal object
+    return response()->json($result->askHumanSignal->toArray());
+}
+```
+
+The `AskHumanSignal::toArray()` shape:
+
+```php
+// Free-text mode
+['mode' => 'free_text', 'question' => 'What city?', 'questions' => []]
+
+// Structured mode
+[
+    'mode' => 'structured',
+    'question' => null,
+    'questions' => [
+        ['type' => 'single_choice',   'question' => 'Timeline?',  'options' => ['1 week', '1 month']],
+        ['type' => 'multiple_choice', 'question' => 'Features?',  'options' => ['Auth', 'Payments']],
+        ['type' => 'free_text',       'question' => 'Anything else?', 'options' => []],
+    ],
+]
+```
+
 ## Registration API
 
 ```php
@@ -55,6 +95,9 @@ $result = (new SalesCoach)
     ->onLoopComplete(function (AgentResponse $response, int $iterations) {
         logger()->info("Completed in {$iterations} iterations");
     })
+    ->onAskHuman(function (AskHumanSignal $signal, int $iteration) {
+        broadcast(new HumanInputRequired($signal->toArray()));
+    })
     ->reactLoop('Analyze this transcript...');
 ```
 
@@ -63,3 +106,4 @@ $result = (new SalesCoach)
 - Each `on*` method returns `$this` for fluent chaining
 - Callbacks are observers — they MUST NOT alter the loop flow
 - Callbacks are optional — loops work identically with zero callbacks registered
+- `onAskHuman` is the only callback that signals loop termination — `onLoopComplete` does not fire alongside it

@@ -9,8 +9,11 @@ use Laravel\Ai\Responses\Data\ToolCall;
 use Laravel\Ai\Responses\Data\Usage;
 use Laragentic\Exceptions\MaxIterationsExceededException;
 use Laragentic\Loops\CoTResult;
+use Laragentic\Signals\AskHumanSignal;
+use Laragentic\Signals\QuestionType;
 use Laragentic\Tests\Fixtures\AdditionTool;
 use Laragentic\Tests\Fixtures\CoTTestAgent;
+use Laragentic\Tools\AskHumanTool;
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -475,4 +478,101 @@ test('handles tool execution errors gracefully', function () {
     $result = $agent->chainOfThought('Test');
 
     expect($result->steps[0]->toolCalls[0]['result'])->toContain('Error executing tool');
+});
+
+// ─── AskHuman ────────────────────────────────────────────────────────
+
+test('CoT loop terminates immediately when LLM calls ask_human', function () {
+    $agent = (new CoTTestAgent)
+        ->withTools([new AskHumanTool])
+        ->fakeResponses([
+            makeCoTResponse('I need more input.', [
+                ['name' => 'ask_human', 'arguments' => ['mode' => 'free_text', 'question' => 'What is the problem domain?']],
+            ]),
+            // This must NOT be reached
+            makeCoTResponse('Final Answer: Should not appear.'),
+        ]);
+
+    $result = $agent->chainOfThought('Analyze this system.');
+
+    expect($result)->toBeInstanceOf(CoTResult::class);
+    expect($result->askedHuman())->toBeTrue();
+    expect($result->completed())->toBeFalse();
+    expect($result->reachedMaxIterations)->toBeFalse();
+    expect($result->reasoningIterations)->toBe(1);
+    expect($agent->getPromptCallCount())->toBe(1);
+});
+
+test('CoT askHumanSignal contains the free-text question', function () {
+    $agent = (new CoTTestAgent)
+        ->withTools([new AskHumanTool])
+        ->fakeResponses([
+            makeCoTResponse('Need input.', [
+                ['name' => 'ask_human', 'arguments' => ['mode' => 'free_text', 'question' => 'What constraints apply?']],
+            ]),
+        ]);
+
+    $result = $agent->chainOfThought('Design the architecture.');
+
+    expect($result->askHumanSignal)->toBeInstanceOf(AskHumanSignal::class);
+    expect($result->askHumanSignal->isStructured())->toBeFalse();
+    expect($result->askHumanSignal->getFreeTextQuestion())->toBe('What constraints apply?');
+});
+
+test('CoT askHumanSignal contains structured questions', function () {
+    $agent = (new CoTTestAgent)
+        ->withTools([new AskHumanTool])
+        ->fakeResponses([
+            makeCoTResponse('Need structured input.', [
+                ['name' => 'ask_human', 'arguments' => [
+                    'mode' => 'structured',
+                    'questions' => [
+                        ['type' => 'single_choice', 'question' => 'Scale?', 'options' => ['Small', 'Medium', 'Large']],
+                        ['type' => 'free_text', 'question' => 'Team size?'],
+                    ],
+                ]],
+            ]),
+        ]);
+
+    $result = $agent->chainOfThought('Plan the project.');
+
+    expect($result->askHumanSignal->isStructured())->toBeTrue();
+    $questions = $result->askHumanSignal->getQuestions();
+    expect($questions)->toHaveCount(2);
+    expect($questions[0]->type)->toBe(QuestionType::SingleChoice);
+    expect($questions[1]->type)->toBe(QuestionType::FreeText);
+});
+
+test('CoT onAskHuman callback fires with signal and iteration', function () {
+    $capturedSignal = null;
+    $capturedIteration = null;
+
+    $agent = (new CoTTestAgent)
+        ->withTools([new AskHumanTool])
+        ->fakeResponses([
+            makeCoTResponse('Asking.', [
+                ['name' => 'ask_human', 'arguments' => ['mode' => 'free_text', 'question' => 'Requirements?']],
+            ]),
+        ])
+        ->onAskHuman(function (AskHumanSignal $signal, int $iteration) use (&$capturedSignal, &$capturedIteration) {
+            $capturedSignal = $signal;
+            $capturedIteration = $iteration;
+        });
+
+    $agent->chainOfThought('Solve the problem.');
+
+    expect($capturedSignal)->toBeInstanceOf(AskHumanSignal::class);
+    expect($capturedIteration)->toBe(1);
+});
+
+test('CoT askedHuman() is false for a normally completed result', function () {
+    $agent = (new CoTTestAgent)->fakeResponses([
+        makeCoTResponse('Final Answer: Done.'),
+    ]);
+
+    $result = $agent->chainOfThought('Simple problem.');
+
+    expect($result->askedHuman())->toBeFalse();
+    expect($result->askHumanSignal)->toBeNull();
+    expect($result->completed())->toBeTrue();
 });

@@ -2,12 +2,17 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Collection;
 use Laravel\Ai\Responses\AgentResponse;
 use Laravel\Ai\Responses\Data\Meta;
+use Laravel\Ai\Responses\Data\ToolCall;
+use Laravel\Ai\Responses\Data\ToolResult;
 use Laravel\Ai\Responses\Data\Usage;
 use Laragentic\Exceptions\MaxStepsExceededException;
 use Laragentic\Loops\PlanResult;
 use Laragentic\Loops\PlanStep;
+use Laragentic\Signals\AskHumanSignal;
+use Laragentic\Signals\QuestionType;
 use Laragentic\Tests\Fixtures\PlanTestAgent;
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -20,6 +25,35 @@ function makePlanResponse(string $text): AgentResponse
         usage: new Usage(promptTokens: 10, completionTokens: 20),
         meta: new Meta(provider: 'test', model: 'test-model'),
     );
+}
+
+/**
+ * Build a plan step response that includes an SDK-resolved ask_human tool result.
+ *
+ * PlanExecuteLoop uses prompt() (SDK-resolved tool calls), so signals
+ * arrive in toolResults rather than being executed by our loop directly.
+ */
+function makePlanResponseWithAskHuman(string $text, AskHumanSignal $signal): AgentResponse
+{
+    $response = makePlanResponse($text);
+
+    $toolCall = new ToolCall(
+        id: 'tc-ask-' . uniqid(),
+        name: 'ask_human',
+        arguments: [],
+    );
+
+    $toolResult = new ToolResult(
+        id: 'tr-ask-' . uniqid(),
+        name: 'ask_human',
+        arguments: [],
+        result: (string) $signal,
+    );
+
+    $response->toolCalls = new Collection([$toolCall]);
+    $response->toolResults = new Collection([$toolResult]);
+
+    return $response;
 }
 
 function makePlanAgent(): PlanTestAgent
@@ -609,4 +643,100 @@ test('passes provider and model to prompt calls', function () {
         expect($args['model'])->toBe('claude-haiku');
         expect($args['timeout'])->toBe(30);
     }
+});
+
+// ─── AskHuman ────────────────────────────────────────────────────────
+
+test('PlanExecuteLoop terminates when a step response contains an ask_human tool result', function () {
+    $signal = AskHumanSignal::freeText('What format should the report be in?');
+
+    $agent = makePlanAgent()->fakeResponses([
+        makePlanResponse("1. Research\n2. Write report"),
+        // Step 1 execution returns an AskHumanSignal in toolResults
+        makePlanResponseWithAskHuman('I need clarification.', $signal),
+        // Step 2 and synthesis must NOT be reached
+        makePlanResponse('Report content.'),
+        makePlanResponse('Final synthesis.'),
+    ]);
+
+    $result = $agent->planExecute('Research and write a report');
+
+    expect($result)->toBeInstanceOf(PlanResult::class);
+    expect($result->askedHuman())->toBeTrue();
+    expect($result->completed())->toBeFalse();
+    expect($result->reachedMaxSteps)->toBeFalse();
+    // Only plan + step 1 were called (step 2 and synthesis skipped)
+    expect($agent->getPromptCallCount())->toBe(2);
+});
+
+test('PlanExecuteLoop askHumanSignal contains the free-text question', function () {
+    $signal = AskHumanSignal::freeText('Which database should I use?');
+
+    $agent = makePlanAgent()->fakeResponses([
+        makePlanResponse("1. Design schema\n2. Implement"),
+        makePlanResponseWithAskHuman('Need more info.', $signal),
+    ]);
+
+    $result = $agent->planExecute('Build the data layer');
+
+    expect($result->askHumanSignal)->toBeInstanceOf(AskHumanSignal::class);
+    expect($result->askHumanSignal->isStructured())->toBeFalse();
+    expect($result->askHumanSignal->getFreeTextQuestion())->toBe('Which database should I use?');
+});
+
+test('PlanExecuteLoop askHumanSignal contains structured questions', function () {
+    $signal = AskHumanSignal::structured([
+        \Laragentic\Signals\HumanQuestion::singleChoice('Language?', ['PHP', 'Python', 'Go']),
+        \Laragentic\Signals\HumanQuestion::multipleChoice('Features?', ['Auth', 'API', 'Queue']),
+    ]);
+
+    $agent = makePlanAgent()->fakeResponses([
+        makePlanResponse("1. Choose stack\n2. Scaffold"),
+        makePlanResponseWithAskHuman('Need preferences.', $signal),
+    ]);
+
+    $result = $agent->planExecute('Bootstrap a new service');
+
+    expect($result->askHumanSignal->isStructured())->toBeTrue();
+    $questions = $result->askHumanSignal->getQuestions();
+    expect($questions)->toHaveCount(2);
+    expect($questions[0]->type)->toBe(QuestionType::SingleChoice);
+    expect($questions[0]->options)->toBe(['PHP', 'Python', 'Go']);
+    expect($questions[1]->type)->toBe(QuestionType::MultipleChoice);
+});
+
+test('PlanExecuteLoop onAskHuman callback fires with signal and step number', function () {
+    $capturedSignal = null;
+    $capturedStep = null;
+
+    $signal = AskHumanSignal::freeText('Confirm budget?');
+
+    $agent = makePlanAgent()
+        ->fakeResponses([
+            makePlanResponse("1. Estimate costs"),
+            makePlanResponseWithAskHuman('Asking.', $signal),
+        ])
+        ->onAskHuman(function (AskHumanSignal $s, int $step) use (&$capturedSignal, &$capturedStep) {
+            $capturedSignal = $s;
+            $capturedStep = $step;
+        });
+
+    $agent->planExecute('Plan the project budget');
+
+    expect($capturedSignal)->toBeInstanceOf(AskHumanSignal::class);
+    expect($capturedStep)->toBe(1);
+});
+
+test('PlanExecuteLoop askedHuman() is false for a normally completed result', function () {
+    $agent = makePlanAgent()->fakeResponses([
+        makePlanResponse("1. Do the work"),
+        makePlanResponse('Work done.'),
+        makePlanResponse('Final answer.'),
+    ]);
+
+    $result = $agent->planExecute('Simple task');
+
+    expect($result->askedHuman())->toBeFalse();
+    expect($result->askHumanSignal)->toBeNull();
+    expect($result->completed())->toBeTrue();
 });

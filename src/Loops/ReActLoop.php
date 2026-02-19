@@ -8,6 +8,7 @@ use Closure;
 use Laragentic\Concerns\ExecutesLoopTools;
 use Laragentic\Concerns\HasIterationCallbacks;
 use Laragentic\Exceptions\MaxIterationsExceededException;
+use Laragentic\Signals\AskHumanSignal;
 use Laravel\Ai\Responses\AgentResponse;
 
 /**
@@ -151,6 +152,33 @@ trait ReActLoop
             // and has produced a final answer.
             if ($this->loopShouldTerminate($response)) {
                 // When the SDK resolved tool calls internally (Prism),
+                // the tool results are already in toolResults. Scan them
+                // for an AskHumanSignal before treating this as a normal
+                // loop completion, since executeLoopToolCalls() is skipped.
+                foreach ($response->toolResults as $toolResult) {
+                    $resultStr = (string) $toolResult->result;
+
+                    if (AskHumanSignal::isSignal($resultStr)) {
+                        $signal = AskHumanSignal::fromString($resultStr);
+
+                        $steps[] = new LoopStep(
+                            iteration: $iteration,
+                            response: $response,
+                        );
+
+                        $this->fireCallbacks('iterationEnd', $iteration, $response);
+                        $this->fireCallbacks('askHuman', $signal, $iteration);
+
+                        return new LoopResult(
+                            response: $response,
+                            iterations: $iteration,
+                            steps: $steps,
+                            askHumanSignal: $signal,
+                        );
+                    }
+                }
+
+                // When the SDK resolved tool calls internally (Prism),
                 // fire action callbacks so consumers see what happened.
                 $this->fireSdkResolvedToolCallbacks($response, $iteration);
 
@@ -173,6 +201,31 @@ trait ReActLoop
             // Execute each tool the LLM requested.
 
             $toolCallRecords = $this->executeLoopToolCalls($response, $iteration);
+
+            // ── ASK HUMAN ───────────────────────────────────────────
+            // If a tool returned an AskHumanSignal, pause the loop and
+            // fire the onAskHuman callback. No second LLM call is made.
+
+            if ($this->detectedAskHuman !== null) {
+                $signal = $this->detectedAskHuman;
+                $this->detectedAskHuman = null;
+
+                $steps[] = new LoopStep(
+                    iteration: $iteration,
+                    response: $response,
+                    toolCalls: $toolCallRecords,
+                );
+
+                $this->fireCallbacks('iterationEnd', $iteration, $response);
+                $this->fireCallbacks('askHuman', $signal, $iteration);
+
+                return new LoopResult(
+                    response: $response,
+                    iterations: $iteration,
+                    steps: $steps,
+                    askHumanSignal: $signal,
+                );
+            }
 
             // ── OBSERVATION ─────────────────────────────────────────
             // Format the tool results into an observation and feed it
@@ -309,6 +362,31 @@ trait ReActLoop
 
             // If no tool calls, the LLM considers the goal satisfied.
             if ($this->loopShouldTerminate($response)) {
+                // Scan SDK-resolved tool results for an AskHumanSignal
+                // before treating this as a normal loop completion.
+                foreach ($response->toolResults as $toolResult) {
+                    $resultStr = (string) $toolResult->result;
+
+                    if (AskHumanSignal::isSignal($resultStr)) {
+                        $signal = AskHumanSignal::fromString($resultStr);
+
+                        $steps[] = new LoopStep(
+                            iteration: $iteration,
+                            response: $response,
+                        );
+
+                        yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
+                        yield from $this->fireStreamCallbacks('askHuman', $signal, $iteration);
+
+                        return new LoopResult(
+                            response: $response,
+                            iterations: $iteration,
+                            steps: $steps,
+                            askHumanSignal: $signal,
+                        );
+                    }
+                }
+
                 // When the SDK resolved tool calls internally (Prism),
                 // fire action callbacks so consumers see what happened.
                 yield from $this->fireSdkResolvedToolStreamCallbacks($response, $iteration);
@@ -347,6 +425,32 @@ trait ReActLoop
                     'arguments' => $arguments,
                     'result' => $result,
                 ];
+
+                if ($this->detectedAskHuman !== null) {
+                    break;
+                }
+            }
+
+            // ── ASK HUMAN ───────────────────────────────────────────
+            if ($this->detectedAskHuman !== null) {
+                $signal = $this->detectedAskHuman;
+                $this->detectedAskHuman = null;
+
+                $steps[] = new LoopStep(
+                    iteration: $iteration,
+                    response: $response,
+                    toolCalls: $toolCallRecords,
+                );
+
+                yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
+                yield from $this->fireStreamCallbacks('askHuman', $signal, $iteration);
+
+                return new LoopResult(
+                    response: $response,
+                    iterations: $iteration,
+                    steps: $steps,
+                    askHumanSignal: $signal,
+                );
             }
 
             // ── OBSERVATION ─────────────────────────────────────────

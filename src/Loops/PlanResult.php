@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Laragentic\Loops;
 
+use Laragentic\Signals\AskHumanSignal;
 use Laravel\Ai\Responses\AgentResponse;
 
 /**
@@ -25,6 +26,7 @@ class PlanResult
         public readonly array $steps,
         public readonly int $replans = 0,
         public readonly bool $reachedMaxSteps = false,
+        public readonly ?AskHumanSignal $askHumanSignal = null,
     ) {}
 
     /**
@@ -45,10 +47,21 @@ class PlanResult
 
     /**
      * Determine if the loop completed naturally (all steps executed + synthesized).
+     *
+     * Returns false when the loop was interrupted by an AskHumanSignal
+     * or when max steps were reached.
      */
     public function completed(): bool
     {
-        return ! $this->reachedMaxSteps;
+        return ! $this->reachedMaxSteps && $this->askHumanSignal === null;
+    }
+
+    /**
+     * Determine if the loop was paused to ask the human a question.
+     */
+    public function askedHuman(): bool
+    {
+        return $this->askHumanSignal !== null;
     }
 
     /**

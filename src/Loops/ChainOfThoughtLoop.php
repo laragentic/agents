@@ -8,6 +8,7 @@ use Closure;
 use Laragentic\Concerns\ExecutesLoopTools;
 use Laragentic\Concerns\HasIterationCallbacks;
 use Laragentic\Exceptions\MaxIterationsExceededException;
+use Laragentic\Signals\AskHumanSignal;
 use Laravel\Ai\Responses\AgentResponse;
 
 /**
@@ -172,6 +173,30 @@ trait ChainOfThoughtLoop
 
             if ($response->toolCalls->isNotEmpty()) {
                 $toolCallRecords = $this->executeLoopToolCalls($response, $iteration);
+
+                // ── ASK HUMAN ───────────────────────────────────────
+                if ($this->detectedAskHuman !== null) {
+                    $signal = $this->detectedAskHuman;
+                    $this->detectedAskHuman = null;
+
+                    $steps[] = new CoTStep(
+                        iteration: $iteration,
+                        response: $response,
+                        toolCalls: $toolCallRecords,
+                        confident: false,
+                    );
+
+                    $this->fireCallbacks('iterationEnd', $iteration, $response);
+                    $this->fireCallbacks('askHuman', $signal, $iteration);
+
+                    return new CoTResult(
+                        response: $response,
+                        reasoningIterations: $iteration,
+                        steps: $steps,
+                        askHumanSignal: $signal,
+                    );
+                }
+
                 $observation = $this->formatObservation($toolCallRecords);
             }
 
@@ -367,6 +392,33 @@ trait ChainOfThoughtLoop
                         'arguments' => $arguments,
                         'result' => $result,
                     ];
+
+                    if ($this->detectedAskHuman !== null) {
+                        break;
+                    }
+                }
+
+                // ── ASK HUMAN ───────────────────────────────────────
+                if ($this->detectedAskHuman !== null) {
+                    $signal = $this->detectedAskHuman;
+                    $this->detectedAskHuman = null;
+
+                    $steps[] = new CoTStep(
+                        iteration: $iteration,
+                        response: $response,
+                        toolCalls: $toolCallRecords,
+                        confident: false,
+                    );
+
+                    yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
+                    yield from $this->fireStreamCallbacks('askHuman', $signal, $iteration);
+
+                    return new CoTResult(
+                        response: $response,
+                        reasoningIterations: $iteration,
+                        steps: $steps,
+                        askHumanSignal: $signal,
+                    );
                 }
 
                 $observation = $this->formatObservation($toolCallRecords);

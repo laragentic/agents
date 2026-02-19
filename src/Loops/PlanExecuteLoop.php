@@ -7,6 +7,7 @@ namespace Laragentic\Loops;
 use Closure;
 use Laragentic\Concerns\HasCallbacks;
 use Laragentic\Exceptions\MaxStepsExceededException;
+use Laragentic\Signals\AskHumanSignal;
 use Laravel\Ai\Responses\AgentResponse;
 
 /**
@@ -269,6 +270,28 @@ trait PlanExecuteLoop
             $stepsExecuted++;
             $lastResponse = $stepResponse;
 
+            // ── ASK HUMAN ───────────────────────────────────────────
+            // PlanExecuteLoop uses the SDK to resolve tool calls within
+            // prompt(). Scan toolResults for the AskHumanSignal JSON marker.
+
+            foreach ($stepResponse->toolResults as $toolResult) {
+                $resultStr = (string) $toolResult->result;
+
+                if (AskHumanSignal::isSignal($resultStr)) {
+                    $signal = AskHumanSignal::fromString($resultStr);
+
+                    $this->fireCallbacks('askHuman', $signal, $stepNumber);
+
+                    return new PlanResult(
+                        response: $stepResponse,
+                        plan: $planDescriptions,
+                        steps: $executedSteps,
+                        replans: $replanCount,
+                        askHumanSignal: $signal,
+                    );
+                }
+            }
+
             // Check for replanning
             $triggeredReplan = false;
 
@@ -428,6 +451,25 @@ trait PlanExecuteLoop
 
             $stepsExecuted++;
             $lastResponse = $stepResponse;
+
+            // ── ASK HUMAN ───────────────────────────────────────────
+            foreach ($stepResponse->toolResults as $toolResult) {
+                $resultStr = (string) $toolResult->result;
+
+                if (AskHumanSignal::isSignal($resultStr)) {
+                    $signal = AskHumanSignal::fromString($resultStr);
+
+                    yield from $this->fireStreamCallbacks('askHuman', $signal, $stepNumber);
+
+                    return new PlanResult(
+                        response: $stepResponse,
+                        plan: $planDescriptions,
+                        steps: $executedSteps,
+                        replans: $replanCount,
+                        askHumanSignal: $signal,
+                    );
+                }
+            }
 
             $triggeredReplan = false;
 

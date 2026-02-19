@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Laragentic\Loops;
 
+use Laragentic\Signals\AskHumanSignal;
 use Laravel\Ai\Responses\AgentResponse;
 
 /**
@@ -28,6 +29,7 @@ class CoTResult
         public readonly int $reasoningIterations,
         public readonly array $steps = [],
         public readonly bool $reachedMaxIterations = false,
+        public readonly ?AskHumanSignal $askHumanSignal = null,
     ) {}
 
     /**
@@ -48,10 +50,21 @@ class CoTResult
 
     /**
      * Determine if the loop completed naturally (agent expressed confidence).
+     *
+     * Returns false when the loop was interrupted by an AskHumanSignal
+     * or when max iterations were reached.
      */
     public function completed(): bool
     {
-        return ! $this->reachedMaxIterations;
+        return ! $this->reachedMaxIterations && $this->askHumanSignal === null;
+    }
+
+    /**
+     * Determine if the loop was paused to ask the human a question.
+     */
+    public function askedHuman(): bool
+    {
+        return $this->askHumanSignal !== null;
     }
 
     /**

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Laragentic\Concerns;
 
 use Closure;
+use Laragentic\Signals\AskHumanSignal;
 
 /**
  * Provides a generic callback registration and dispatch mechanism
@@ -44,6 +45,22 @@ trait HasCallbacks
     public function onLoopComplete(Closure $callback): static
     {
         $this->loopCallbacks['loopComplete'][] = $callback;
+
+        return $this;
+    }
+
+    /**
+     * Register a callback invoked when the LLM calls the ask_human tool.
+     *
+     * The loop fires this callback then terminates immediately — no second
+     * LLM iteration occurs. Use this to broadcast the questions to your
+     * frontend, store the pending state, etc.
+     *
+     * Receives: (AskHumanSignal $signal, int $iteration)
+     */
+    public function onAskHuman(Closure $callback): static
+    {
+        $this->loopCallbacks['askHuman'][] = $callback;
 
         return $this;
     }
