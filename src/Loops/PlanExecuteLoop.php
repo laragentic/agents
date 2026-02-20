@@ -47,6 +47,7 @@ use Laravel\Ai\Responses\AgentResponse;
 trait PlanExecuteLoop
 {
     use HasCallbacks;
+    use \Laragentic\Concerns\StreamsPrompts;
 
     /**
      * The maximum number of plan steps for this agent instance.
@@ -391,12 +392,9 @@ trait PlanExecuteLoop
         yield from $this->fireStreamCallbacks('loopStart', $task);
 
         // ── PLANNING PHASE ──────────────────────────────────────────
-        $planResponse = $this->prompt(
-            prompt: $this->buildPlanningPrompt($task),
-            provider: $provider,
-            model: $model,
-            timeout: $timeout,
-        );
+        $planGen = $this->streamingPrompt($this->buildPlanningPrompt($task), 0, $provider, $model, $timeout);
+        yield from $planGen;
+        $planResponse = $planGen->getReturn();
 
         $planDescriptions = $this->parsePlanSteps($planResponse->text);
 
@@ -436,18 +434,15 @@ trait PlanExecuteLoop
 
             yield from $this->fireStreamCallbacks('beforeStep', $stepNumber, $description, $totalSteps);
 
-            $stepResponse = $this->prompt(
-                prompt: $this->buildStepExecutionPrompt(
-                    $task,
-                    $planDescriptions,
-                    $stepNumber,
-                    $description,
-                    $executedSteps,
-                ),
-                provider: $provider,
-                model: $model,
-                timeout: $timeout,
+            $stepGen = $this->streamingPrompt(
+                $this->buildStepExecutionPrompt($task, $planDescriptions, $stepNumber, $description, $executedSteps),
+                $stepNumber,
+                $provider,
+                $model,
+                $timeout,
             );
+            yield from $stepGen;
+            $stepResponse = $stepGen->getReturn();
 
             $stepsExecuted++;
             $lastResponse = $stepResponse;
@@ -517,12 +512,15 @@ trait PlanExecuteLoop
         // ── SYNTHESIS PHASE ─────────────────────────────────────────
         yield from $this->fireStreamCallbacks('beforeSynthesis', $executedSteps);
 
-        $synthesisResponse = $this->prompt(
-            prompt: $this->buildSynthesisPrompt($task, $executedSteps),
-            provider: $provider,
-            model: $model,
-            timeout: $timeout,
+        $synthesisGen = $this->streamingPrompt(
+            $this->buildSynthesisPrompt($task, $executedSteps),
+            $stepsExecuted + 1,
+            $provider,
+            $model,
+            $timeout,
         );
+        yield from $synthesisGen;
+        $synthesisResponse = $synthesisGen->getReturn();
 
         yield from $this->fireStreamCallbacks('afterSynthesis', $synthesisResponse);
         yield from $this->fireStreamCallbacks('loopComplete', $synthesisResponse, $stepsExecuted);

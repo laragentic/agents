@@ -48,6 +48,7 @@ trait ChainOfThoughtLoop
 {
     use HasIterationCallbacks;
     use ExecutesLoopTools;
+    use \Laragentic\Concerns\StreamsPrompts;
 
     /**
      * The maximum number of reasoning iterations for this agent instance.
@@ -342,12 +343,9 @@ trait ChainOfThoughtLoop
             // ── REASONING ───────────────────────────────────────────
             yield from $this->fireStreamCallbacks('beforeReasoning', $currentPrompt, $iteration);
 
-            $response = $this->prompt(
-                prompt: $currentPrompt,
-                provider: $provider,
-                model: $model,
-                timeout: $timeout,
-            );
+            $gen = $this->streamingPrompt($currentPrompt, $iteration, $provider, $model, $timeout);
+            yield from $gen;
+            $response = $gen->getReturn();
 
             yield from $this->fireStreamCallbacks('afterReasoning', $response, $iteration);
 

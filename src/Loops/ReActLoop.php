@@ -49,6 +49,7 @@ trait ReActLoop
 {
     use HasIterationCallbacks;
     use ExecutesLoopTools;
+    use \Laragentic\Concerns\StreamsPrompts;
 
     /**
      * The maximum number of loop iterations for this agent instance.
@@ -351,12 +352,9 @@ trait ReActLoop
             // ── THOUGHT ─────────────────────────────────────────────
             yield from $this->fireStreamCallbacks('beforeThought', $currentPrompt, $iteration);
 
-            $response = $this->prompt(
-                prompt: $currentPrompt,
-                provider: $provider,
-                model: $model,
-                timeout: $timeout,
-            );
+            $gen = $this->streamingPrompt($currentPrompt, $iteration, $provider, $model, $timeout);
+            yield from $gen;
+            $response = $gen->getReturn();
 
             yield from $this->fireStreamCallbacks('afterThought', $response, $iteration);
 

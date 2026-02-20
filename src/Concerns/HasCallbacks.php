@@ -50,6 +50,19 @@ trait HasCallbacks
     }
 
     /**
+     * Register a callback invoked for each text token during streaming.
+     *
+     * Only fires in streaming loop variants (e.g. reactLoopStream).
+     * Receives: (string $delta, int $iteration)
+     */
+    public function onTextDelta(Closure $callback): static
+    {
+        $this->loopCallbacks['textDelta'][] = $callback;
+
+        return $this;
+    }
+
+    /**
      * Register a callback invoked when the LLM calls the ask_human tool.
      *
      * The loop fires this callback then terminates immediately — no second
