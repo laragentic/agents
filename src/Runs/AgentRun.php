@@ -197,6 +197,10 @@ class AgentRun extends Model
      */
     public function freshStatus(): RunStatus
     {
-        return static::where('run_id', $this->run_id)->value('status');
+        $raw = static::where('run_id', $this->run_id)->value('status');
+
+        // Eloquent applies casts in value() on Laravel 10+, so $raw may
+        // already be a RunStatus enum. Fall back to from() for older versions.
+        return $raw instanceof RunStatus ? $raw : RunStatus::from($raw);
     }
 }

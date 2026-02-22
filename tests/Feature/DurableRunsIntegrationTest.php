@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use Illuminate\Support\Facades\Schema;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\HasTools;
 use Laravel\Ai\Promptable;
@@ -13,6 +12,7 @@ use Laragentic\Loops\ReActLoop;
 use Laragentic\Runs\AgentCheckpoint;
 use Laragentic\Runs\AgentRun;
 use Laragentic\Runs\RunStatus;
+use Illuminate\Support\Facades\Schema;
 use Laragentic\Tests\Fixtures\CalculatorTool;
 
 /*
@@ -28,6 +28,22 @@ use Laragentic\Tests\Fixtures\CalculatorTool;
 | Skip:  vendor/bin/pest --exclude-group=integration
 |
 */
+
+// ─── Database Setup: run the real package migrations ─────────────────
+
+beforeEach(function () {
+    $migrations = glob(__DIR__ . '/../../database/migrations/*.php');
+    sort($migrations);
+    foreach ($migrations as $file) {
+        (require $file)->up();
+    }
+});
+
+afterEach(function () {
+    Schema::dropIfExists('agent_tool_calls');
+    Schema::dropIfExists('agent_checkpoints');
+    Schema::dropIfExists('agent_runs');
+});
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -61,60 +77,6 @@ class DurableMathIntegrationAgent implements Agent, HasTools
         return [new CalculatorTool];
     }
 }
-
-// ─── Database Setup ──────────────────────────────────────────────────
-
-beforeEach(function () {
-    Schema::create('agent_runs', function ($table) {
-        $table->id();
-        $table->string('run_id')->unique();
-        $table->string('agent_class');
-        $table->string('loop_type')->default('react');
-        $table->string('status')->default('pending');
-        $table->longText('initial_prompt');
-        $table->longText('final_response')->nullable();
-        $table->json('metadata')->nullable();
-        $table->timestamp('started_at')->nullable();
-        $table->timestamp('completed_at')->nullable();
-        $table->timestamp('failed_at')->nullable();
-        $table->timestamp('cancelled_at')->nullable();
-        $table->timestamp('paused_at')->nullable();
-        $table->string('failure_reason')->nullable();
-        $table->timestamps();
-        $table->index('status');
-    });
-
-    Schema::create('agent_checkpoints', function ($table) {
-        $table->id();
-        $table->string('run_id');
-        $table->unsignedInteger('iteration');
-        $table->longText('prompt');
-        $table->longText('response_text');
-        $table->json('tool_calls')->nullable();
-        $table->longText('observation')->nullable();
-        $table->longText('next_prompt')->nullable();
-        $table->json('metadata')->nullable();
-        $table->timestamps();
-        $table->unique(['run_id', 'iteration']);
-    });
-
-    Schema::create('agent_tool_calls', function ($table) {
-        $table->id();
-        $table->string('run_id');
-        $table->string('idempotency_key')->unique();
-        $table->unsignedInteger('iteration');
-        $table->string('tool_name');
-        $table->json('arguments');
-        $table->longText('result');
-        $table->timestamps();
-    });
-});
-
-afterEach(function () {
-    Schema::dropIfExists('agent_tool_calls');
-    Schema::dropIfExists('agent_checkpoints');
-    Schema::dropIfExists('agent_runs');
-});
 
 // ─── Tests ───────────────────────────────────────────────────────────
 

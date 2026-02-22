@@ -18,53 +18,14 @@ use Laragentic\Runs\RunStatus;
 use Laragentic\Tests\Fixtures\AdditionTool;
 use Laragentic\Tests\Fixtures\DurableTestAgent;
 
-// ─── Setup: in-memory SQLite ────────────────────────────────────────
+// ─── Setup: run the real package migrations ──────────────────────────
 
 beforeEach(function () {
-    // Create tables using the package migrations directly
-    Schema::create('agent_runs', function ($table) {
-        $table->id();
-        $table->string('run_id')->unique();
-        $table->string('agent_class');
-        $table->string('loop_type')->default('react');
-        $table->string('status')->default('pending');
-        $table->longText('initial_prompt');
-        $table->longText('final_response')->nullable();
-        $table->json('metadata')->nullable();
-        $table->timestamp('started_at')->nullable();
-        $table->timestamp('completed_at')->nullable();
-        $table->timestamp('failed_at')->nullable();
-        $table->timestamp('cancelled_at')->nullable();
-        $table->timestamp('paused_at')->nullable();
-        $table->string('failure_reason')->nullable();
-        $table->timestamps();
-        $table->index('status');
-    });
-
-    Schema::create('agent_checkpoints', function ($table) {
-        $table->id();
-        $table->string('run_id');
-        $table->unsignedInteger('iteration');
-        $table->longText('prompt');
-        $table->longText('response_text');
-        $table->json('tool_calls')->nullable();
-        $table->longText('observation')->nullable();
-        $table->longText('next_prompt')->nullable();
-        $table->json('metadata')->nullable();
-        $table->timestamps();
-        $table->unique(['run_id', 'iteration']);
-    });
-
-    Schema::create('agent_tool_calls', function ($table) {
-        $table->id();
-        $table->string('run_id');
-        $table->string('idempotency_key')->unique();
-        $table->unsignedInteger('iteration');
-        $table->string('tool_name');
-        $table->json('arguments');
-        $table->longText('result');
-        $table->timestamps();
-    });
+    $migrations = glob(__DIR__ . '/../../../database/migrations/*.php');
+    sort($migrations);
+    foreach ($migrations as $file) {
+        (require $file)->up();
+    }
 });
 
 afterEach(function () {
@@ -237,6 +198,43 @@ test('resumes from last checkpoint when run already has checkpoints', function (
     // Run should now be completed
     $run->refresh();
     expect($run->status)->toBe(RunStatus::Completed);
+});
+
+test('humanReply is appended to the resumed prompt when provided', function () {
+    AgentRun::create([
+        'run_id'         => 'run-human',
+        'agent_class'    => DurableTestAgent::class,
+        'loop_type'      => 'react',
+        'status'         => RunStatus::Paused,
+        'initial_prompt' => 'Original question',
+    ]);
+
+    AgentCheckpoint::create([
+        'run_id'        => 'run-human',
+        'iteration'     => 1,
+        'prompt'        => 'Original question',
+        'response_text' => 'Awaiting human.',
+        'next_prompt'   => 'What colour is the sky?',
+    ]);
+
+    $receivedPrompt = null;
+
+    $agent = durableAgent()->fakeResponses([
+        durableResponse('The sky is blue.'),
+    ]);
+
+    $agent->onBeforeThought(function (string $prompt) use (&$receivedPrompt) {
+        $receivedPrompt = $prompt;
+    });
+
+    $agent->durableReactLoop(
+        'Original question',
+        runId: 'run-human',
+        humanReply: 'Blue.',
+    );
+
+    expect($receivedPrompt)->toContain('What colour is the sky?');
+    expect($receivedPrompt)->toContain('Human reply: Blue.');
 });
 
 test('returning to a completed run throws', function () {

@@ -289,12 +289,11 @@ return [
         | Pruning
         |--------------------------------------------------------------------------
         |
-        | Runs and their checkpoints older than `prune_after_days` can be
-        | cleaned up by running the artisan command:
+        | Runs and their checkpoints older than `prune_after_days` days are
+        | considered stale and can be cleaned up via a scheduled job or
+        | custom artisan command in your application.
         |
-        |     php artisan agentic:prune-runs
-        |
-        | Set to null to disable automatic pruning entirely.
+        | Set to 0 to disable pruning entirely.
         |
         */
 

@@ -40,7 +40,7 @@ return new class extends Migration
             $table->timestamp('failed_at')->nullable();
             $table->timestamp('cancelled_at')->nullable();
             $table->timestamp('paused_at')->nullable();
-            $table->string('failure_reason')->nullable();
+            $table->longText('failure_reason')->nullable();
 
             $table->timestamps();
 

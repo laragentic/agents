@@ -49,25 +49,23 @@ use Laragentic\Exceptions\MaxIterationsExceededException;
  */
 trait HasDurableRuns
 {
-    use ExecutesLoopTools;
-
     // ─── Configuration ───────────────────────────────────────────────
 
     /**
      * How often (iterations) to poll the DB for a cancellation signal.
      *
-     * Default: every iteration. Increase for lower DB pressure in
-     * long-running loops.
+     * null = read from config('agentic.runs.cancellation_poll_every', 1).
+     * Set via withCancellationPoll() to override config per-instance.
      */
-    protected int $cancellationPollEvery = 1;
+    protected ?int $cancellationPollEvery = null;
 
     /**
      * Whether to use idempotency for tool calls.
      *
-     * When true, completed tool calls are stored and not re-executed on
-     * resume. Set to false if tools are purely read-only and stateless.
+     * null = read from config('agentic.runs.tool_idempotency', true).
+     * Set to false via withoutToolIdempotency() for read-only tools.
      */
-    protected bool $durableToolIdempotency = true;
+    protected ?bool $durableToolIdempotency = null;
 
     // ─── Fluent Configuration ────────────────────────────────────────
 
@@ -85,6 +83,21 @@ trait HasDurableRuns
         return $this;
     }
 
+    // ─── Internal Config Resolution ──────────────────────────────────
+
+    /**
+     * Resolve runtime values for config-driven properties.
+     *
+     * Called once at the top of durableReactLoop(). If a property has
+     * not been overridden via a fluent setter (i.e. it is still null),
+     * the value is read from config with a sensible fallback.
+     */
+    private function resolveDurableConfig(): void
+    {
+        $this->cancellationPollEvery ??= max(1, (int) config('agentic.runs.cancellation_poll_every', 1));
+        $this->durableToolIdempotency ??= (bool) config('agentic.runs.tool_idempotency', true);
+    }
+
     // ─── Public API ──────────────────────────────────────────────────
 
     /**
@@ -95,16 +108,24 @@ trait HasDurableRuns
      * Passing the same `$runId` again resumes from the last checkpoint.
      * Omitting `$runId` auto-generates a UUID.
      *
-     * @throws RunCancelledException     If the run is cancelled mid-loop.
-     * @throws MaxIterationsExceededException  If max iterations are reached and throw_on_max_iterations is true.
+     * When resuming a paused run after an AskHumanSignal, pass the
+     * human's answer via `$humanReply`. It is appended to the prompt
+     * that was saved at pause time so the LLM sees both the pending
+     * question and the answer on the next iteration.
+     *
+     * @throws RunCancelledException          If the run is cancelled mid-loop.
+     * @throws MaxIterationsExceededException If max iterations are reached and throw_on_max_iterations is true.
      */
     public function durableReactLoop(
         string $prompt,
         ?string $runId = null,
+        ?string $humanReply = null,
         ?string $provider = null,
         ?string $model = null,
         ?int $timeout = null,
     ): LoopResult {
+        $this->resolveDurableConfig();
+
         $run = $this->initDurableRun(
             runId: $runId,
             loopType: 'react',
@@ -122,6 +143,13 @@ trait HasDurableRuns
             $last          = $run->latestCheckpoint();
             $iteration     = $last->iteration;
             $currentPrompt = $last->next_prompt ?? $prompt;
+
+            // When resuming a paused AskHuman run, append the human's
+            // reply so the LLM sees both the outstanding question and
+            // the answer on the very next iteration.
+            if ($humanReply !== null) {
+                $currentPrompt .= "\n\nHuman reply: " . $humanReply;
+            }
 
             // Reconstruct LoopStep history so allToolCalls() works correctly
             foreach ($run->checkpoints as $cp) {
