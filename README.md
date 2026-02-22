@@ -56,6 +56,7 @@ Laragentic adds that missing piece:
 | **ReAct Loop**               | Think → call tools → observe results → repeat until done             |
 | **Plan-Execute Loop**        | Create a plan → execute each step → synthesize a final answer        |
 | **Chain-of-Thought Loop**    | Reason iteratively → evaluate understanding → continue until confident|
+| **Durable Runs**             | Persist every iteration; survive crashes, deploys, and queue retries  |
 | **Agent Skills System**      | Dynamic skill loading with progressive disclosure and auto-discovery  |
 | **Lifecycle Callbacks**      | Hook into every phase to stream progress, log, or broadcast          |
 | **Configurable Limits**      | Set max iterations/steps to control cost and prevent runaway loops   |
@@ -1237,6 +1238,149 @@ The `AskHumanSignal::toArray()` payload your frontend receives:
 - `$result->askHumanSignal` holds the full `AskHumanSignal` object
 - No second LLM call is made — the loop exits cleanly after firing the callback
 - Works identically on all three loops: `reactLoop`, `chainOfThought`, and `planExecute`
+
+---
+
+## Durable Runs
+
+Mix the `HasDurableRuns` trait into any agent that already uses `ReActLoop` to turn ephemeral in-process loops into safe background jobs. Every iteration is checkpointed to a database so your agent can survive crashes, deploys, and queue retries without losing progress.
+
+```php
+class MyAgent implements Agent, HasTools
+{
+    use Promptable, ReActLoop, HasDurableRuns; // ← add HasDurableRuns
+
+    public function tools(): iterable { /* ... */ }
+}
+```
+
+### Run a durable loop
+
+```php
+// Start a new run — auto-generates a UUID run_id
+$result = (new MyAgent)->durableReactLoop('Summarise this 200-page report');
+
+echo $result->text();           // final answer
+echo $result->iterations;       // how many iterations ran
+
+// Or supply your own run_id (e.g. from a queue job payload)
+$result = (new MyAgent)->durableReactLoop(
+    'Summarise this 200-page report',
+    runId: 'run_abc123',
+);
+```
+
+### Resume after a crash
+
+Pass the **same** `runId` again. The loop loads the last checkpoint and restarts from where it left off — already-completed iterations are skipped:
+
+```php
+// Worker died after iteration 3 → resume from iteration 4
+$result = (new MyAgent)->durableReactLoop(
+    'Summarise this 200-page report',
+    runId: 'run_abc123',   // same ID as before
+);
+```
+
+Resuming a `completed`, `failed`, or `cancelled` run throws a `RuntimeException` immediately so you won't silently re-run finished work.
+
+### Cancel from outside
+
+Set the database flag from any process — a HTTP endpoint, a console command, another worker:
+
+```php
+// Cancel from an HTTP controller, another job, etc.
+MyAgent::cancelRun('run_abc123');
+```
+
+The loop polls for cancellation between iterations and throws `RunCancelledException` as soon as it detects the flag.
+
+### Inspect a run
+
+```php
+$run = MyAgent::findRun('run_abc123');
+
+$run->status;         // RunStatus enum (pending|running|completed|failed|cancelled|paused)
+$run->isCompleted();  // bool
+$run->final_response; // The agent's final answer text
+$run->completed_at;   // Carbon timestamp
+
+// All checkpoints (one per iteration)
+foreach ($run->checkpoints as $cp) {
+    echo "Iteration {$cp->iteration}: {$cp->response_text}\n";
+}
+```
+
+### Idempotency keys for tools
+
+Before executing any tool call the loop derives a SHA-256 key from `run_id + iteration + tool_name + sorted_arguments`. The result is stored in `agent_tool_calls`. On resume, a cached result is replayed without re-running the tool — no duplicate emails, no double-charges, no repeated side effects.
+
+Opt out for read-only tools:
+
+```php
+$result = (new MyAgent)
+    ->withoutToolIdempotency()
+    ->durableReactLoop('Fetch today's headlines');
+```
+
+### Migrations
+
+Publish and run the three migrations before using durable runs:
+
+```bash
+php artisan vendor:publish --tag=agentic-migrations
+php artisan migrate
+```
+
+This creates:
+
+| Table                | Purpose                                              |
+| -------------------- | ---------------------------------------------------- |
+| `agent_runs`         | One row per execution — status, timestamps, final response |
+| `agent_checkpoints`  | One row per iteration — prompt, response, tool calls, next prompt |
+| `agent_tool_calls`   | Idempotency records — replayed on resume             |
+
+### Configuration
+
+```php
+// config/agentic.php
+'runs' => [
+    'cancellation_poll_every' => 1,    // check DB for cancel signal every N iterations
+    'tool_idempotency'        => true, // store & replay tool call results on resume
+],
+```
+
+```env
+AGENTIC_RUNS_CANCELLATION_POLL_EVERY=1
+AGENTIC_RUNS_TOOL_IDEMPOTENCY=true
+```
+
+Override per-call with fluent helpers:
+
+```php
+(new MyAgent)
+    ->withCancellationPoll(5)      // poll every 5 iterations (lower DB pressure)
+    ->withoutToolIdempotency()     // disable idempotency for this run
+    ->durableReactLoop('...');
+```
+
+### Run Statuses
+
+| Status      | Meaning                                                    |
+| ----------- | ---------------------------------------------------------- |
+| `pending`   | Created, not yet started                                   |
+| `running`   | Loop is executing                                          |
+| `completed` | Loop finished with a final answer                          |
+| `failed`    | Loop hit max iterations or threw an unhandled exception    |
+| `cancelled` | Cancelled via `cancelRun()`                                |
+| `paused`    | Loop paused on an `AskHumanSignal` — ready to resume       |
+
+`completed`, `failed`, and `cancelled` are **terminal** (cannot be resumed).
+`pending`, `running`, and `paused` are **resumable**.
+
+### All callbacks fire normally
+
+`durableReactLoop` fires every lifecycle callback that `reactLoop` fires — `onLoopStart`, `onBeforeThought`, `onAfterAction`, `onLoopComplete`, `onAskHuman`, etc. You can combine callbacks with durable runs without changing your callback code.
 
 ---
 
