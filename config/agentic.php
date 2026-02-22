@@ -246,6 +246,64 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Durable Runs Configuration
+    |--------------------------------------------------------------------------
+    |
+    | These options control the durable runs system, which provides run IDs,
+    | checkpointing, resume-after-crash, cancellation, and tool idempotency
+    | for agentic loops. Add the HasDurableRuns trait to any agent to opt in.
+    |
+    */
+
+    'runs' => [
+
+        /*
+        |--------------------------------------------------------------------------
+        | Cancellation Poll Frequency
+        |--------------------------------------------------------------------------
+        |
+        | How many iterations to wait between database polls for a cancellation
+        | signal. 1 = check every iteration (safest). Higher values reduce DB
+        | load for long-running loops with many fast iterations.
+        |
+        */
+
+        'cancellation_poll_every' => (int) env('AGENTIC_RUNS_CANCEL_POLL', 1),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Tool Idempotency
+        |--------------------------------------------------------------------------
+        |
+        | When true (default), completed tool calls are stored in
+        | agent_tool_calls and replayed on resume instead of re-executing.
+        | Disable only for fully read-only, stateless tools where re-execution
+        | is safe and you want to avoid the extra DB writes.
+        |
+        */
+
+        'tool_idempotency' => (bool) env('AGENTIC_RUNS_IDEMPOTENCY', true),
+
+        /*
+        |--------------------------------------------------------------------------
+        | Pruning
+        |--------------------------------------------------------------------------
+        |
+        | Runs and their checkpoints older than `prune_after_days` can be
+        | cleaned up by running the artisan command:
+        |
+        |     php artisan agentic:prune-runs
+        |
+        | Set to null to disable automatic pruning entirely.
+        |
+        */
+
+        'prune_after_days' => (int) env('AGENTIC_RUNS_PRUNE_DAYS', 30),
+
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | MCP Client Configuration
     |--------------------------------------------------------------------------
     |
