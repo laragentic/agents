@@ -168,7 +168,7 @@ trait ReActLoop
                         );
 
                         $this->fireCallbacks('iterationEnd', $iteration, $response);
-                        $this->fireCallbacks('askHuman', $signal, $iteration);
+                        $this->fireCallbacks('askHuman', $signal, $iteration, $response);
 
                         return new LoopResult(
                             response: $response,
@@ -218,7 +218,7 @@ trait ReActLoop
                 );
 
                 $this->fireCallbacks('iterationEnd', $iteration, $response);
-                $this->fireCallbacks('askHuman', $signal, $iteration);
+                $this->fireCallbacks('askHuman', $signal, $iteration, $response);
 
                 return new LoopResult(
                     response: $response,
@@ -374,7 +374,7 @@ trait ReActLoop
                         );
 
                         yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
-                        yield from $this->fireStreamCallbacks('askHuman', $signal, $iteration);
+                        yield from $this->fireStreamCallbacks('askHuman', $signal, $iteration, $response);
 
                         return new LoopResult(
                             response: $response,
@@ -441,7 +441,7 @@ trait ReActLoop
                 );
 
                 yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
-                yield from $this->fireStreamCallbacks('askHuman', $signal, $iteration);
+                yield from $this->fireStreamCallbacks('askHuman', $signal, $iteration, $response);
 
                 return new LoopResult(
                     response: $response,

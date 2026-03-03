@@ -69,7 +69,12 @@ trait HasCallbacks
      * LLM iteration occurs. Use this to broadcast the questions to your
      * frontend, store the pending state, etc.
      *
-     * Receives: (AskHumanSignal $signal, int $iteration)
+     * Receives: (AskHumanSignal $signal, int $iteration, AgentResponse $response)
+     *
+     * The AgentResponse is the last LLM response before the loop paused.
+     * Use $response->conversationId to persist the conversation across
+     * the ask-human round-trip (the RememberConversation middleware sets
+     * this value before the ask_human callback fires).
      */
     public function onAskHuman(Closure $callback): static
     {

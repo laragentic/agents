@@ -281,7 +281,7 @@ trait PlanExecuteLoop
                 if (AskHumanSignal::isSignal($resultStr)) {
                     $signal = AskHumanSignal::fromString($resultStr);
 
-                    $this->fireCallbacks('askHuman', $signal, $stepNumber);
+                    $this->fireCallbacks('askHuman', $signal, $stepNumber, $stepResponse);
 
                     return new PlanResult(
                         response: $stepResponse,
@@ -454,7 +454,7 @@ trait PlanExecuteLoop
                 if (AskHumanSignal::isSignal($resultStr)) {
                     $signal = AskHumanSignal::fromString($resultStr);
 
-                    yield from $this->fireStreamCallbacks('askHuman', $signal, $stepNumber);
+                    yield from $this->fireStreamCallbacks('askHuman', $signal, $stepNumber, $stepResponse);
 
                     return new PlanResult(
                         response: $stepResponse,

@@ -671,6 +671,27 @@ test('loop does not call onLoopComplete when terminated by AskHuman', function (
     expect($loopCompleted)->toBeFalse();
 });
 
+test('onAskHuman callback receives the AgentResponse as the third argument', function () {
+    $capturedResponse = null;
+
+    $agent = makeAgent()
+        ->withTools([new AskHumanTool])
+        ->fakeResponses([
+            makeResponse('I need to ask something.', [
+                ['name' => 'ask_human', 'arguments' => ['mode' => 'free_text', 'question' => 'What city?']],
+            ]),
+        ])
+        ->onAskHuman(function (AskHumanSignal $signal, int $iteration, AgentResponse $response) use (&$capturedResponse) {
+            $capturedResponse = $response;
+        });
+
+    $result = $agent->reactLoop('Check weather.');
+
+    expect($capturedResponse)->toBeInstanceOf(AgentResponse::class)
+        ->and($capturedResponse->text)->toBe('I need to ask something.')
+        ->and($capturedResponse)->toBe($result->response);
+});
+
 test('askedHuman() is false for a normally completed loop', function () {
     $agent = makeAgent()->fakeResponses([
         makeResponse('Done.'),

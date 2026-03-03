@@ -188,7 +188,7 @@ trait ChainOfThoughtLoop
                     );
 
                     $this->fireCallbacks('iterationEnd', $iteration, $response);
-                    $this->fireCallbacks('askHuman', $signal, $iteration);
+                    $this->fireCallbacks('askHuman', $signal, $iteration, $response);
 
                     return new CoTResult(
                         response: $response,
@@ -409,7 +409,7 @@ trait ChainOfThoughtLoop
                     );
 
                     yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
-                    yield from $this->fireStreamCallbacks('askHuman', $signal, $iteration);
+                    yield from $this->fireStreamCallbacks('askHuman', $signal, $iteration, $response);
 
                     return new CoTResult(
                         response: $response,
