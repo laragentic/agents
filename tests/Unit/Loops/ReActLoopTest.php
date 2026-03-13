@@ -7,6 +7,7 @@ use Laravel\Ai\Responses\AgentResponse;
 use Laravel\Ai\Responses\Data\Meta;
 use Laravel\Ai\Responses\Data\ToolCall;
 use Laravel\Ai\Responses\Data\Usage;
+use Laragentic\Contracts\PausesLoop;
 use Laragentic\Exceptions\MaxIterationsExceededException;
 use Laragentic\Loops\LoopResult;
 use Laragentic\Signals\AskHumanSignal;
@@ -14,6 +15,7 @@ use Laragentic\Signals\HumanQuestion;
 use Laragentic\Signals\QuestionType;
 use Laragentic\Tests\Fixtures\AdditionTool;
 use Laragentic\Tests\Fixtures\FailingTool;
+use Laragentic\Tests\Fixtures\PausingTool;
 use Laragentic\Tests\Fixtures\TestAgent;
 use Laragentic\Tools\AskHumanTool;
 
@@ -724,4 +726,120 @@ test('AskHumanSignal toArray() returns expected structure for frontend use', fun
     expect($arr['mode'])->toBe('structured');
     expect($arr['questions'][0]['type'])->toBe('single_choice');
     expect($arr['questions'][0]['options'])->toBe(['S', 'M', 'L']);
+});
+
+// ─── PausesLoop ──────────────────────────────────────────────────────
+
+test('loop terminates when a tool returns a PausesLoop result', function () {
+    $agent = makeAgent()
+        ->withTools([new PausingTool])
+        ->fakeResponses([
+            makeResponse('Launching widget.', [
+                ['name' => 'interactive_widget', 'arguments' => ['name' => 'calculator']],
+            ]),
+            makeResponse('This should not be reached.'),
+        ]);
+
+    $result = $agent->reactLoop('Open the calculator.');
+
+    expect($result)->toBeInstanceOf(LoopResult::class);
+    expect($result->paused())->toBeTrue();
+    expect($result->completed())->toBeFalse();
+    expect($result->askedHuman())->toBeFalse();
+    expect($result->reachedMaxIterations)->toBeFalse();
+    expect($result->iterations)->toBe(1);
+    expect($agent->getPromptCallCount())->toBe(1);
+});
+
+test('pauseSignal on result contains the PausesLoop instance', function () {
+    $agent = makeAgent()
+        ->withTools([new PausingTool])
+        ->fakeResponses([
+            makeResponse('Launching.', [
+                ['name' => 'interactive_widget', 'arguments' => ['name' => 'stamp_duty']],
+            ]),
+        ]);
+
+    $result = $agent->reactLoop('Calculate stamp duty.');
+
+    expect($result->pauseSignal)->toBeInstanceOf(PausesLoop::class);
+    expect((string) $result->pauseSignal)->toContain('stamp_duty');
+});
+
+test('pausing tool breaks execution before subsequent tools in the same iteration', function () {
+    $executedTools = [];
+
+    $agent = makeAgent()
+        ->withTools([new PausingTool, new AdditionTool])
+        ->fakeResponses([
+            makeResponse('Need to do two things.', [
+                ['name' => 'interactive_widget', 'arguments' => ['name' => 'calculator']],
+                ['name' => 'add_numbers', 'arguments' => ['a' => 1, 'b' => 2]],
+            ]),
+        ])
+        ->onAfterAction(function (string $tool) use (&$executedTools) {
+            $executedTools[] = $tool;
+        });
+
+    $result = $agent->reactLoop('Do two things.');
+
+    // Only the pausing tool should have executed; the second tool should be skipped
+    expect($executedTools)->toBe(['interactive_widget']);
+    expect($result->paused())->toBeTrue();
+    expect($result->iterations)->toBe(1);
+    expect($result->steps[0]->toolCalls)->toHaveCount(1);
+});
+
+test('regular tools before a pausing tool still execute', function () {
+    $executedTools = [];
+
+    $agent = makeAgent()
+        ->withTools([new AdditionTool, new PausingTool])
+        ->fakeResponses([
+            makeResponse('Add then launch widget.', [
+                ['name' => 'add_numbers', 'arguments' => ['a' => 5, 'b' => 3]],
+                ['name' => 'interactive_widget', 'arguments' => ['name' => 'editor']],
+            ]),
+        ])
+        ->onAfterAction(function (string $tool) use (&$executedTools) {
+            $executedTools[] = $tool;
+        });
+
+    $result = $agent->reactLoop('Add and then open editor.');
+
+    expect($executedTools)->toBe(['add_numbers', 'interactive_widget']);
+    expect($result->paused())->toBeTrue();
+    expect($result->steps[0]->toolCalls)->toHaveCount(2);
+    expect($result->steps[0]->toolCalls[0]['result'])->toBe('8');
+});
+
+test('loop fires loopComplete when paused (unlike AskHuman)', function () {
+    $loopCompleted = false;
+
+    $agent = makeAgent()
+        ->withTools([new PausingTool])
+        ->fakeResponses([
+            makeResponse('Launching.', [
+                ['name' => 'interactive_widget', 'arguments' => ['name' => 'widget']],
+            ]),
+        ])
+        ->onLoopComplete(function () use (&$loopCompleted) {
+            $loopCompleted = true;
+        });
+
+    $agent->reactLoop('Open widget.');
+
+    expect($loopCompleted)->toBeTrue();
+});
+
+test('paused() is false for a normally completed loop', function () {
+    $agent = makeAgent()->fakeResponses([
+        makeResponse('Done.'),
+    ]);
+
+    $result = $agent->reactLoop('Hello.');
+
+    expect($result->paused())->toBeFalse();
+    expect($result->pauseSignal)->toBeNull();
+    expect($result->completed())->toBeTrue();
 });

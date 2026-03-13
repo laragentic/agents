@@ -198,6 +198,27 @@ trait ChainOfThoughtLoop
                     );
                 }
 
+                // ── PAUSE ──────────────────────────────────────────
+                if ($this->detectedPause !== null) {
+                    $this->detectedPause = null;
+
+                    $steps[] = new CoTStep(
+                        iteration: $iteration,
+                        response: $response,
+                        toolCalls: $toolCallRecords,
+                        confident: false,
+                    );
+
+                    $this->fireCallbacks('iterationEnd', $iteration, $response);
+                    $this->fireCallbacks('loopComplete', $response, $iteration);
+
+                    return new CoTResult(
+                        response: $response,
+                        reasoningIterations: $iteration,
+                        steps: $steps,
+                    );
+                }
+
                 $observation = $this->formatObservation($toolCallRecords);
             }
 
@@ -416,6 +437,27 @@ trait ChainOfThoughtLoop
                         reasoningIterations: $iteration,
                         steps: $steps,
                         askHumanSignal: $signal,
+                    );
+                }
+
+                // ── PAUSE ──────────────────────────────────────────
+                if ($this->detectedPause !== null) {
+                    $this->detectedPause = null;
+
+                    $steps[] = new CoTStep(
+                        iteration: $iteration,
+                        response: $response,
+                        toolCalls: $toolCallRecords,
+                        confident: false,
+                    );
+
+                    yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
+                    yield from $this->fireStreamCallbacks('loopComplete', $response, $iteration);
+
+                    return new CoTResult(
+                        response: $response,
+                        reasoningIterations: $iteration,
+                        steps: $steps,
                     );
                 }
 

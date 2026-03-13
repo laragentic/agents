@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Laragentic\Concerns;
 
+use Laragentic\Contracts\PausesLoop;
 use Laragentic\Signals\AskHumanSignal;
 use Laravel\Ai\Contracts\Tool;
 use Laravel\Ai\Responses\AgentResponse;
@@ -27,6 +28,14 @@ trait ExecutesLoopTools
      * reads and acts on the signal.
      */
     protected ?AskHumanSignal $detectedAskHuman = null;
+
+    /**
+     * Holds the PausesLoop result detected during the most recent
+     * executeLoopToolCalls() call. When set, the loop should stop
+     * executing further tools and terminate — the tool requires
+     * human interaction before the loop can continue.
+     */
+    protected ?PausesLoop $detectedPause = null;
 
     /**
      * Format tool call results into an observation string.
@@ -81,8 +90,7 @@ trait ExecutesLoopTools
                 'result' => $result,
             ];
 
-            // Stop processing further tool calls once a human question is detected.
-            if ($this->detectedAskHuman !== null) {
+            if ($this->detectedAskHuman !== null || $this->detectedPause !== null) {
                 break;
             }
         }
@@ -114,6 +122,8 @@ trait ExecutesLoopTools
 
             if ($rawResult instanceof AskHumanSignal) {
                 $this->detectedAskHuman = $rawResult;
+            } elseif ($rawResult instanceof PausesLoop) {
+                $this->detectedPause = $rawResult;
             }
 
             return (string) $rawResult;

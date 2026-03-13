@@ -228,6 +228,32 @@ trait ReActLoop
                 );
             }
 
+            // ── PAUSE ──────────────────────────────────────────────
+            // If a tool returned a PausesLoop result, stop the loop.
+            // The tool requires human interaction (e.g. an SDK app
+            // iframe) before the loop can meaningfully continue.
+
+            if ($this->detectedPause !== null) {
+                $pause = $this->detectedPause;
+                $this->detectedPause = null;
+
+                $steps[] = new LoopStep(
+                    iteration: $iteration,
+                    response: $response,
+                    toolCalls: $toolCallRecords,
+                );
+
+                $this->fireCallbacks('iterationEnd', $iteration, $response);
+                $this->fireCallbacks('loopComplete', $response, $iteration);
+
+                return new LoopResult(
+                    response: $response,
+                    iterations: $iteration,
+                    steps: $steps,
+                    pauseSignal: $pause,
+                );
+            }
+
             // ── OBSERVATION ─────────────────────────────────────────
             // Format the tool results into an observation and feed it
             // back to the LLM on the next iteration. The LLM will then
@@ -448,6 +474,28 @@ trait ReActLoop
                     iterations: $iteration,
                     steps: $steps,
                     askHumanSignal: $signal,
+                );
+            }
+
+            // ── PAUSE ──────────────────────────────────────────────
+            if ($this->detectedPause !== null) {
+                $pause = $this->detectedPause;
+                $this->detectedPause = null;
+
+                $steps[] = new LoopStep(
+                    iteration: $iteration,
+                    response: $response,
+                    toolCalls: $toolCallRecords,
+                );
+
+                yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
+                yield from $this->fireStreamCallbacks('loopComplete', $response, $iteration);
+
+                return new LoopResult(
+                    response: $response,
+                    iterations: $iteration,
+                    steps: $steps,
+                    pauseSignal: $pause,
                 );
             }
 
