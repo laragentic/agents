@@ -200,22 +200,32 @@ trait ChainOfThoughtLoop
 
                 // ── PAUSE ──────────────────────────────────────────
                 if ($this->detectedPause !== null) {
+                    $pause = $this->detectedPause;
                     $this->detectedPause = null;
+
+                    $executedToolNames = array_map(fn ($r) => $r['tool'], $toolCallRecords);
+                    $allRequestedTools = $response->toolCalls->map(fn ($tc) => $tc->name)->all();
+                    $deferredTools = array_values(array_diff($allRequestedTools, $executedToolNames));
+
+                    $observation = $this->buildCoTPauseObservation($toolCallRecords, $deferredTools);
 
                     $steps[] = new CoTStep(
                         iteration: $iteration,
                         response: $response,
                         toolCalls: $toolCallRecords,
+                        observation: $observation,
                         confident: false,
                     );
 
                     $this->fireCallbacks('iterationEnd', $iteration, $response);
-                    $this->fireCallbacks('loopComplete', $response, $iteration);
+                    $this->fireCallbacks('pause', $pause, $deferredTools, $iteration, $response);
 
                     return new CoTResult(
                         response: $response,
                         reasoningIterations: $iteration,
                         steps: $steps,
+                        pauseSignal: $pause,
+                        deferredTools: $deferredTools,
                     );
                 }
 
@@ -324,6 +334,28 @@ trait ChainOfThoughtLoop
     }
 
     /**
+     * Build an observation for a paused CoT loop.
+     *
+     * @param  array<int, array{tool: string, arguments: array<string, mixed>, result: string}>  $toolCallRecords
+     * @param  list<string>  $deferredTools
+     */
+    protected function buildCoTPauseObservation(array $toolCallRecords, array $deferredTools): string
+    {
+        $observation = $this->formatObservation($toolCallRecords);
+
+        $observation .= "\n\n⏸ The loop was paused because a tool requires user interaction. "
+            . 'Wait for the user to provide the result from the interactive tool.';
+
+        if (count($deferredTools) > 0) {
+            $toolList = implode(', ', $deferredTools);
+            $observation .= "\n\nIMPORTANT: The following tool(s) were requested but NOT yet executed: {$toolList}. "
+                . 'After the user provides the interactive result, you MUST continue by calling these deferred tools.';
+        }
+
+        return $observation;
+    }
+
+    /**
      * Execute the Chain-of-Thought loop as a Generator for streaming contexts.
      *
      * This method mirrors chainOfThought() but yields values from callbacks,
@@ -412,7 +444,7 @@ trait ChainOfThoughtLoop
                         'result' => $result,
                     ];
 
-                    if ($this->detectedAskHuman !== null) {
+                    if ($this->detectedAskHuman !== null || $this->detectedPause !== null) {
                         break;
                     }
                 }
@@ -442,22 +474,32 @@ trait ChainOfThoughtLoop
 
                 // ── PAUSE ──────────────────────────────────────────
                 if ($this->detectedPause !== null) {
+                    $pause = $this->detectedPause;
                     $this->detectedPause = null;
+
+                    $executedToolNames = array_map(fn ($r) => $r['tool'], $toolCallRecords);
+                    $allRequestedTools = $response->toolCalls->map(fn ($tc) => $tc->name)->all();
+                    $deferredTools = array_values(array_diff($allRequestedTools, $executedToolNames));
+
+                    $observation = $this->buildCoTPauseObservation($toolCallRecords, $deferredTools);
 
                     $steps[] = new CoTStep(
                         iteration: $iteration,
                         response: $response,
                         toolCalls: $toolCallRecords,
+                        observation: $observation,
                         confident: false,
                     );
 
                     yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
-                    yield from $this->fireStreamCallbacks('loopComplete', $response, $iteration);
+                    yield from $this->fireStreamCallbacks('pause', $pause, $deferredTools, $iteration, $response);
 
                     return new CoTResult(
                         response: $response,
                         reasoningIterations: $iteration,
                         steps: $steps,
+                        pauseSignal: $pause,
+                        deferredTools: $deferredTools,
                     );
                 }
 

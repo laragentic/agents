@@ -232,25 +232,38 @@ trait ReActLoop
             // If a tool returned a PausesLoop result, stop the loop.
             // The tool requires human interaction (e.g. an SDK app
             // iframe) before the loop can meaningfully continue.
+            // We still build an observation so the conversation history
+            // captures what happened — enabling the LLM to pick up
+            // deferred tools when the conversation resumes.
 
             if ($this->detectedPause !== null) {
                 $pause = $this->detectedPause;
                 $this->detectedPause = null;
 
+                $executedToolNames = array_map(fn ($r) => $r['tool'], $toolCallRecords);
+                $allRequestedTools = $response->toolCalls->map(fn ($tc) => $tc->name)->all();
+                $deferredTools = array_values(array_diff($allRequestedTools, $executedToolNames));
+
+                $observation = $this->buildPauseObservation($toolCallRecords, $deferredTools);
+
+                $this->fireCallbacks('observation', $observation, $iteration);
+
                 $steps[] = new LoopStep(
                     iteration: $iteration,
                     response: $response,
                     toolCalls: $toolCallRecords,
+                    observation: $observation,
                 );
 
                 $this->fireCallbacks('iterationEnd', $iteration, $response);
-                $this->fireCallbacks('loopComplete', $response, $iteration);
+                $this->fireCallbacks('pause', $pause, $deferredTools, $iteration, $response);
 
                 return new LoopResult(
                     response: $response,
                     iterations: $iteration,
                     steps: $steps,
                     pauseSignal: $pause,
+                    deferredTools: $deferredTools,
                 );
             }
 
@@ -335,6 +348,33 @@ trait ReActLoop
             . "\n\nBased on the observation above, continue working toward the user's goal. "
             . 'If the goal is fully satisfied, provide a final answer. '
             . 'If more information is needed, use the available tools.';
+    }
+
+    /**
+     * Build an observation for a paused loop that tells the LLM which
+     * tools were executed and which were deferred.
+     *
+     * This observation is stored in the conversation so that when the
+     * loop resumes (with the user's interactive result), the LLM has
+     * context about which tools still need to be called.
+     *
+     * @param  array<int, array{tool: string, arguments: array<string, mixed>, result: string}>  $toolCallRecords
+     * @param  list<string>  $deferredTools
+     */
+    protected function buildPauseObservation(array $toolCallRecords, array $deferredTools): string
+    {
+        $observation = "Observation:\n" . $this->formatObservation($toolCallRecords);
+
+        $observation .= "\n\n⏸ The loop was paused because a tool requires user interaction. "
+            . 'Wait for the user to provide the result from the interactive tool.';
+
+        if (count($deferredTools) > 0) {
+            $toolList = implode(', ', $deferredTools);
+            $observation .= "\n\nIMPORTANT: The following tool(s) were requested but NOT yet executed: {$toolList}. "
+                . 'After the user provides the interactive result, you MUST continue by calling these deferred tools.';
+        }
+
+        return $observation;
     }
 
     /**
@@ -450,7 +490,7 @@ trait ReActLoop
                     'result' => $result,
                 ];
 
-                if ($this->detectedAskHuman !== null) {
+                if ($this->detectedAskHuman !== null || $this->detectedPause !== null) {
                     break;
                 }
             }
@@ -482,20 +522,30 @@ trait ReActLoop
                 $pause = $this->detectedPause;
                 $this->detectedPause = null;
 
+                $executedToolNames = array_map(fn ($r) => $r['tool'], $toolCallRecords);
+                $allRequestedTools = $response->toolCalls->map(fn ($tc) => $tc->name)->all();
+                $deferredTools = array_values(array_diff($allRequestedTools, $executedToolNames));
+
+                $observation = $this->buildPauseObservation($toolCallRecords, $deferredTools);
+
+                yield from $this->fireStreamCallbacks('observation', $observation, $iteration);
+
                 $steps[] = new LoopStep(
                     iteration: $iteration,
                     response: $response,
                     toolCalls: $toolCallRecords,
+                    observation: $observation,
                 );
 
                 yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
-                yield from $this->fireStreamCallbacks('loopComplete', $response, $iteration);
+                yield from $this->fireStreamCallbacks('pause', $pause, $deferredTools, $iteration, $response);
 
                 return new LoopResult(
                     response: $response,
                     iterations: $iteration,
                     steps: $steps,
                     pauseSignal: $pause,
+                    deferredTools: $deferredTools,
                 );
             }
 

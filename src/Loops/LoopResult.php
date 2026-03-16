@@ -18,6 +18,7 @@ class LoopResult
 {
     /**
      * @param  list<LoopStep>  $steps
+     * @param  list<string>  $deferredTools  Tool names requested by the LLM but not executed due to the pause
      */
     public function __construct(
         public readonly AgentResponse $response,
@@ -26,6 +27,7 @@ class LoopResult
         public readonly bool $reachedMaxIterations = false,
         public readonly ?AskHumanSignal $askHumanSignal = null,
         public readonly ?PausesLoop $pauseSignal = null,
+        public readonly array $deferredTools = [],
     ) {}
 
     /**

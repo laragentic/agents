@@ -766,7 +766,7 @@ test('pauseSignal on result contains the PausesLoop instance', function () {
     expect((string) $result->pauseSignal)->toContain('stamp_duty');
 });
 
-test('pausing tool breaks execution before subsequent tools in the same iteration', function () {
+test('pausing tool breaks execution before subsequent tools and tracks deferred tools', function () {
     $executedTools = [];
 
     $agent = makeAgent()
@@ -783,11 +783,11 @@ test('pausing tool breaks execution before subsequent tools in the same iteratio
 
     $result = $agent->reactLoop('Do two things.');
 
-    // Only the pausing tool should have executed; the second tool should be skipped
     expect($executedTools)->toBe(['interactive_widget']);
     expect($result->paused())->toBeTrue();
     expect($result->iterations)->toBe(1);
     expect($result->steps[0]->toolCalls)->toHaveCount(1);
+    expect($result->deferredTools)->toBe(['add_numbers']);
 });
 
 test('regular tools before a pausing tool still execute', function () {
@@ -813,8 +813,10 @@ test('regular tools before a pausing tool still execute', function () {
     expect($result->steps[0]->toolCalls[0]['result'])->toBe('8');
 });
 
-test('loop fires loopComplete when paused (unlike AskHuman)', function () {
+test('loop fires onPause callback instead of loopComplete when paused', function () {
     $loopCompleted = false;
+    $pauseFired = false;
+    $pausedDeferredTools = null;
 
     $agent = makeAgent()
         ->withTools([new PausingTool])
@@ -825,11 +827,94 @@ test('loop fires loopComplete when paused (unlike AskHuman)', function () {
         ])
         ->onLoopComplete(function () use (&$loopCompleted) {
             $loopCompleted = true;
+        })
+        ->onPause(function (PausesLoop $signal, array $deferred) use (&$pauseFired, &$pausedDeferredTools) {
+            $pauseFired = true;
+            $pausedDeferredTools = $deferred;
         });
 
     $agent->reactLoop('Open widget.');
 
-    expect($loopCompleted)->toBeTrue();
+    expect($loopCompleted)->toBeFalse();
+    expect($pauseFired)->toBeTrue();
+    expect($pausedDeferredTools)->toBe([]);
+});
+
+test('pause observation contains deferred tool names', function () {
+    $receivedObservation = null;
+
+    $agent = makeAgent()
+        ->withTools([new PausingTool, new AdditionTool])
+        ->fakeResponses([
+            makeResponse('Launch widget then add.', [
+                ['name' => 'interactive_widget', 'arguments' => ['name' => 'calc']],
+                ['name' => 'add_numbers', 'arguments' => ['a' => 1, 'b' => 2]],
+            ]),
+        ])
+        ->onObservation(function (string $observation) use (&$receivedObservation) {
+            $receivedObservation = $observation;
+        });
+
+    $result = $agent->reactLoop('Do both.');
+
+    expect($receivedObservation)->not->toBeNull();
+    expect($receivedObservation)->toContain('paused');
+    expect($receivedObservation)->toContain('add_numbers');
+    expect($receivedObservation)->toContain('NOT yet executed');
+    expect($result->steps[0]->hasObservation())->toBeTrue();
+});
+
+test('pause observation is stored on the LoopStep', function () {
+    $agent = makeAgent()
+        ->withTools([new PausingTool])
+        ->fakeResponses([
+            makeResponse('Launching.', [
+                ['name' => 'interactive_widget', 'arguments' => ['name' => 'widget']],
+            ]),
+        ]);
+
+    $result = $agent->reactLoop('Open widget.');
+
+    expect($result->steps[0]->hasObservation())->toBeTrue();
+    expect($result->steps[0]->observation)->toContain('paused');
+    expect($result->steps[0]->observation)->toContain('interactive_widget');
+});
+
+test('deferredTools is empty when the pausing tool is the only tool', function () {
+    $agent = makeAgent()
+        ->withTools([new PausingTool])
+        ->fakeResponses([
+            makeResponse('Launching.', [
+                ['name' => 'interactive_widget', 'arguments' => ['name' => 'widget']],
+            ]),
+        ]);
+
+    $result = $agent->reactLoop('Open widget.');
+
+    expect($result->deferredTools)->toBe([]);
+});
+
+test('onPause callback receives deferred tool names', function () {
+    $capturedDeferred = null;
+    $capturedSignal = null;
+
+    $agent = makeAgent()
+        ->withTools([new PausingTool, new AdditionTool])
+        ->fakeResponses([
+            makeResponse('Two things.', [
+                ['name' => 'interactive_widget', 'arguments' => ['name' => 'calc']],
+                ['name' => 'add_numbers', 'arguments' => ['a' => 1, 'b' => 2]],
+            ]),
+        ])
+        ->onPause(function (PausesLoop $signal, array $deferred) use (&$capturedSignal, &$capturedDeferred) {
+            $capturedSignal = $signal;
+            $capturedDeferred = $deferred;
+        });
+
+    $agent->reactLoop('Do both.');
+
+    expect($capturedSignal)->toBeInstanceOf(PausesLoop::class);
+    expect($capturedDeferred)->toBe(['add_numbers']);
 });
 
 test('paused() is false for a normally completed loop', function () {

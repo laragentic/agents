@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Laragentic\Loops;
 
+use Laragentic\Contracts\PausesLoop;
 use Laragentic\Signals\AskHumanSignal;
 use Laravel\Ai\Responses\AgentResponse;
 
@@ -23,6 +24,7 @@ class CoTResult
 {
     /**
      * @param  list<CoTStep>  $steps
+     * @param  list<string>  $deferredTools  Tool names requested by the LLM but not executed due to the pause
      */
     public function __construct(
         public readonly AgentResponse $response,
@@ -30,6 +32,8 @@ class CoTResult
         public readonly array $steps = [],
         public readonly bool $reachedMaxIterations = false,
         public readonly ?AskHumanSignal $askHumanSignal = null,
+        public readonly ?PausesLoop $pauseSignal = null,
+        public readonly array $deferredTools = [],
     ) {}
 
     /**
@@ -51,12 +55,14 @@ class CoTResult
     /**
      * Determine if the loop completed naturally (agent expressed confidence).
      *
-     * Returns false when the loop was interrupted by an AskHumanSignal
-     * or when max iterations were reached.
+     * Returns false when the loop was interrupted by an AskHumanSignal,
+     * a PausesLoop signal, or when max iterations were reached.
      */
     public function completed(): bool
     {
-        return ! $this->reachedMaxIterations && $this->askHumanSignal === null;
+        return ! $this->reachedMaxIterations
+            && $this->askHumanSignal === null
+            && $this->pauseSignal === null;
     }
 
     /**
@@ -65,6 +71,15 @@ class CoTResult
     public function askedHuman(): bool
     {
         return $this->askHumanSignal !== null;
+    }
+
+    /**
+     * Determine if the loop was paused because a tool requires
+     * human interaction before the loop can continue.
+     */
+    public function paused(): bool
+    {
+        return $this->pauseSignal !== null;
     }
 
     /**

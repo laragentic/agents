@@ -83,6 +83,26 @@ trait HasCallbacks
         return $this;
     }
 
+    /**
+     * Register a callback invoked when a tool returns a PausesLoop result.
+     *
+     * The loop fires this callback then terminates — the tool requires
+     * human interaction (e.g. an interactive iframe) before the loop
+     * can continue. Use this to emit events to the frontend, store
+     * deferred tool info in the conversation, etc.
+     *
+     * Receives: (PausesLoop $signal, array $deferredTools, int $iteration, AgentResponse $response)
+     *
+     * $deferredTools is an array of tool names the LLM requested but
+     * were not executed because the loop paused on an earlier tool.
+     */
+    public function onPause(Closure $callback): static
+    {
+        $this->loopCallbacks['pause'][] = $callback;
+
+        return $this;
+    }
+
     // ─── Internals ──────────────────────────────────────────────────
 
     /**
