@@ -6,6 +6,7 @@ namespace Laragentic\Skills;
 
 use Closure;
 use Laragentic\Concerns\HasCallbacks;
+use Laragentic\Contracts\LoadsSkills;
 
 /**
  * Adds Agent Skills support to any Laravel AI SDK agent.
@@ -40,7 +41,7 @@ trait HasAgentSkills
 
     protected ?SkillRegistry $skillRegistry = null;
 
-    protected ?SkillLoader $skillLoader = null;
+    protected ?LoadsSkills $skillLoader = null;
 
     protected ?SkillResolver $skillResolver = null;
 

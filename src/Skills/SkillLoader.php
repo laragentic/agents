@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Laragentic\Skills;
 
+use Laragentic\Contracts\LoadsSkills;
 use Laragentic\Exceptions\SkillNotFoundException;
 use Laragentic\Exceptions\SkillValidationException;
 
@@ -19,7 +20,7 @@ use Laragentic\Exceptions\SkillValidationException;
  *         references/       # Optional: reference documents
  *         assets/           # Optional: images, etc.
  */
-final class SkillLoader
+final class SkillLoader implements LoadsSkills
 {
     /**
      * @param  string  $basePath  Base directory containing skill folders
