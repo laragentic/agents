@@ -154,29 +154,12 @@ trait ReActLoop
             if ($this->loopShouldTerminate($response)) {
                 // When the SDK resolved tool calls internally (Prism),
                 // the tool results are already in toolResults. Scan them
-                // for an AskHumanSignal before treating this as a normal
-                // loop completion, since executeLoopToolCalls() is skipped.
-                foreach ($response->toolResults as $toolResult) {
-                    $resultStr = (string) $toolResult->result;
+                // for an AskHumanSignal or PausesLoop before treating this
+                // as a normal loop completion.
+                $sdkSignalResult = $this->scanSdkResolvedToolResults($response, $iteration, $steps);
 
-                    if (AskHumanSignal::isSignal($resultStr)) {
-                        $signal = AskHumanSignal::fromString($resultStr);
-
-                        $steps[] = new LoopStep(
-                            iteration: $iteration,
-                            response: $response,
-                        );
-
-                        $this->fireCallbacks('iterationEnd', $iteration, $response);
-                        $this->fireCallbacks('askHuman', $signal, $iteration, $response);
-
-                        return new LoopResult(
-                            response: $response,
-                            iterations: $iteration,
-                            steps: $steps,
-                            askHumanSignal: $signal,
-                        );
-                    }
+                if ($sdkSignalResult !== null) {
+                    return $sdkSignalResult;
                 }
 
                 // When the SDK resolved tool calls internally (Prism),
@@ -427,28 +410,13 @@ trait ReActLoop
             // If no tool calls, the LLM considers the goal satisfied.
             if ($this->loopShouldTerminate($response)) {
                 // Scan SDK-resolved tool results for an AskHumanSignal
-                // before treating this as a normal loop completion.
-                foreach ($response->toolResults as $toolResult) {
-                    $resultStr = (string) $toolResult->result;
+                // or PausesLoop before treating this as a normal completion.
+                $signalGen = $this->scanSdkResolvedToolResultsStream($response, $iteration, $steps);
+                yield from $signalGen;
+                $sdkSignalResult = $signalGen->getReturn();
 
-                    if (AskHumanSignal::isSignal($resultStr)) {
-                        $signal = AskHumanSignal::fromString($resultStr);
-
-                        $steps[] = new LoopStep(
-                            iteration: $iteration,
-                            response: $response,
-                        );
-
-                        yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
-                        yield from $this->fireStreamCallbacks('askHuman', $signal, $iteration, $response);
-
-                        return new LoopResult(
-                            response: $response,
-                            iterations: $iteration,
-                            steps: $steps,
-                            askHumanSignal: $signal,
-                        );
-                    }
+                if ($sdkSignalResult !== null) {
+                    return $sdkSignalResult;
                 }
 
                 // When the SDK resolved tool calls internally (Prism),
@@ -633,6 +601,168 @@ trait ReActLoop
             yield from $this->fireStreamCallbacks('beforeAction', $toolCall->name, $toolCall->arguments, $iteration);
             yield from $this->fireStreamCallbacks('afterAction', $toolCall->name, $toolCall->arguments, $result, $iteration);
         }
+    }
+
+    /**
+     * Scan SDK-resolved tool results for AskHumanSignal or PausesLoop.
+     *
+     * When the Laravel AI SDK resolves tool calls internally (Prism),
+     * our loop's ACTION phase is skipped entirely. This method checks the
+     * already-resolved tool results for signals that should pause/stop the
+     * loop, builds the appropriate LoopResult, and fires callbacks.
+     *
+     * @param  LoopStep[]  $steps
+     */
+    protected function scanSdkResolvedToolResults(
+        AgentResponse $response,
+        int $iteration,
+        array &$steps,
+    ): ?LoopResult {
+        $toolCallRecords = [];
+        $pauseSignal = null;
+        $deferredTools = [];
+
+        foreach ($response->toolResults as $i => $toolResult) {
+            $resultStr = (string) $toolResult->result;
+
+            if (AskHumanSignal::isSignal($resultStr)) {
+                $signal = AskHumanSignal::fromString($resultStr);
+
+                $steps[] = new LoopStep(iteration: $iteration, response: $response);
+
+                $this->fireCallbacks('iterationEnd', $iteration, $response);
+                $this->fireCallbacks('askHuman', $signal, $iteration, $response);
+
+                return new LoopResult(
+                    response: $response,
+                    iterations: $iteration,
+                    steps: $steps,
+                    askHumanSignal: $signal,
+                );
+            }
+
+            if ($toolResult->result instanceof \Laragentic\Contracts\PausesLoop) {
+                $pauseSignal = $toolResult->result;
+
+                $toolCallRecords[] = [
+                    'tool' => $toolResult->name,
+                    'arguments' => $response->toolCalls[$i]->arguments ?? [],
+                    'result' => $resultStr,
+                ];
+
+                $allToolNames = $response->toolCalls->map(fn ($tc) => $tc->name)->all();
+                $executedNames = array_map(fn ($r) => $r['tool'], $toolCallRecords);
+                $deferredTools = array_values(array_diff($allToolNames, $executedNames));
+
+                $observation = $this->buildPauseObservation($toolCallRecords, $deferredTools);
+
+                $this->fireCallbacks('observation', $observation, $iteration);
+
+                $steps[] = new LoopStep(
+                    iteration: $iteration,
+                    response: $response,
+                    toolCalls: $toolCallRecords,
+                    observation: $observation,
+                );
+
+                $this->fireCallbacks('iterationEnd', $iteration, $response);
+                $this->fireCallbacks('pause', $pauseSignal, $deferredTools, $iteration, $response);
+
+                return new LoopResult(
+                    response: $response,
+                    iterations: $iteration,
+                    steps: $steps,
+                    pauseSignal: $pauseSignal,
+                    deferredTools: $deferredTools,
+                );
+            }
+
+            $toolCallRecords[] = [
+                'tool' => $toolResult->name,
+                'arguments' => $response->toolCalls[$i]->arguments ?? [],
+                'result' => $resultStr,
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * Streaming variant of scanSdkResolvedToolResults.
+     *
+     * @param  LoopStep[]  $steps
+     * @return \Generator<int, mixed, mixed, ?LoopResult>
+     */
+    protected function scanSdkResolvedToolResultsStream(
+        AgentResponse $response,
+        int $iteration,
+        array &$steps,
+    ): \Generator {
+        $toolCallRecords = [];
+
+        foreach ($response->toolResults as $i => $toolResult) {
+            $resultStr = (string) $toolResult->result;
+
+            if (AskHumanSignal::isSignal($resultStr)) {
+                $signal = AskHumanSignal::fromString($resultStr);
+
+                $steps[] = new LoopStep(iteration: $iteration, response: $response);
+
+                yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
+                yield from $this->fireStreamCallbacks('askHuman', $signal, $iteration, $response);
+
+                return new LoopResult(
+                    response: $response,
+                    iterations: $iteration,
+                    steps: $steps,
+                    askHumanSignal: $signal,
+                );
+            }
+
+            if ($toolResult->result instanceof \Laragentic\Contracts\PausesLoop) {
+                $pauseSignal = $toolResult->result;
+
+                $toolCallRecords[] = [
+                    'tool' => $toolResult->name,
+                    'arguments' => $response->toolCalls[$i]->arguments ?? [],
+                    'result' => $resultStr,
+                ];
+
+                $allToolNames = $response->toolCalls->map(fn ($tc) => $tc->name)->all();
+                $executedNames = array_map(fn ($r) => $r['tool'], $toolCallRecords);
+                $deferredTools = array_values(array_diff($allToolNames, $executedNames));
+
+                $observation = $this->buildPauseObservation($toolCallRecords, $deferredTools);
+
+                yield from $this->fireStreamCallbacks('observation', $observation, $iteration);
+
+                $steps[] = new LoopStep(
+                    iteration: $iteration,
+                    response: $response,
+                    toolCalls: $toolCallRecords,
+                    observation: $observation,
+                );
+
+                yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
+                yield from $this->fireStreamCallbacks('pause', $pauseSignal, $deferredTools, $iteration, $response);
+
+                return new LoopResult(
+                    response: $response,
+                    iterations: $iteration,
+                    steps: $steps,
+                    pauseSignal: $pauseSignal,
+                    deferredTools: $deferredTools,
+                );
+            }
+
+            $toolCallRecords[] = [
+                'tool' => $toolResult->name,
+                'arguments' => $response->toolCalls[$i]->arguments ?? [],
+                'result' => $resultStr,
+            ];
+        }
+
+        return null;
     }
 
     /**
