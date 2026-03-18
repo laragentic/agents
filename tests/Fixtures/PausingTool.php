@@ -45,6 +45,9 @@ class PausingToolResult implements PausesLoop
 
     public function __toString(): string
     {
-        return json_encode($this->data, JSON_THROW_ON_ERROR);
+        return json_encode([
+            self::MARKER_KEY => true,
+            ...$this->data,
+        ], JSON_THROW_ON_ERROR);
     }
 }

@@ -744,20 +744,25 @@ test('PlanExecuteLoop askedHuman() is false for a normally completed result', fu
 
 // ─── PausesLoop ──────────────────────────────────────────────────────
 
-function makePausesLoopSignal(array $payload = []): PausesLoop
+/**
+ * Build a PausesLoop marker string (matching real Prism behavior where
+ * the object is stringified before reaching the loop).
+ */
+function makePauseMarkerString(array $payload = []): string
 {
-    return new class($payload) implements PausesLoop
-    {
-        public function __construct(private readonly array $payload) {}
-
-        public function __toString(): string
-        {
-            return json_encode($this->payload, JSON_THROW_ON_ERROR);
-        }
-    };
+    return json_encode([
+        PausesLoop::MARKER_KEY => true,
+        ...$payload,
+    ], JSON_THROW_ON_ERROR);
 }
 
-function makePlanResponseWithPause(string $text, PausesLoop $signal): AgentResponse
+/**
+ * Build a plan step response with a stringified PausesLoop tool result.
+ *
+ * Simulates real Prism gateway behavior: the tool result's $result
+ * property is a plain string, not a PausesLoop object.
+ */
+function makePlanResponseWithPause(string $text, string $signalStr): AgentResponse
 {
     $response = makePlanResponse($text);
 
@@ -771,7 +776,7 @@ function makePlanResponseWithPause(string $text, PausesLoop $signal): AgentRespo
         id: 'tr-pause-' . uniqid(),
         name: 'sdk_app_calculator',
         arguments: ['state' => 'NSW'],
-        result: $signal,
+        result: $signalStr,
     );
 
     $response->toolCalls = new Collection([$toolCall]);
@@ -781,7 +786,7 @@ function makePlanResponseWithPause(string $text, PausesLoop $signal): AgentRespo
 }
 
 test('PlanExecuteLoop terminates when a step response contains a PausesLoop tool result', function () {
-    $signal = makePausesLoopSignal(['type' => 'sdk_app_render', 'app_name' => 'Calculator']);
+    $signal = makePauseMarkerString(['type' => 'sdk_app_render', 'app_name' => 'Calculator']);
 
     $agent = makePlanAgent()->fakeResponses([
         makePlanResponse("1. Open calculator\n2. Record result\n3. Advise client"),
@@ -801,8 +806,8 @@ test('PlanExecuteLoop terminates when a step response contains a PausesLoop tool
     expect($agent->getPromptCallCount())->toBe(2);
 });
 
-test('PlanExecuteLoop pauseSignal contains the PausesLoop object', function () {
-    $signal = makePausesLoopSignal(['type' => 'sdk_app_render', 'tool_name' => 'stamp_duty']);
+test('PlanExecuteLoop pauseSignal contains the stringified marker JSON', function () {
+    $signal = makePauseMarkerString(['type' => 'sdk_app_render', 'tool_name' => 'stamp_duty']);
 
     $agent = makePlanAgent()->fakeResponses([
         makePlanResponse("1. Launch tool\n2. Use result"),
@@ -811,12 +816,13 @@ test('PlanExecuteLoop pauseSignal contains the PausesLoop object', function () {
 
     $result = $agent->planExecute('Test');
 
-    expect($result->pauseSignal)->toBeInstanceOf(PausesLoop::class);
-    expect((string) $result->pauseSignal)->toContain('stamp_duty');
+    expect($result->pauseSignal)->toBeString();
+    expect($result->pauseSignal)->toContain('stamp_duty');
+    expect($result->pauseSignal)->toContain(PausesLoop::MARKER_KEY);
 });
 
 test('PlanExecuteLoop deferredSteps contains remaining plan steps after pause', function () {
-    $signal = makePausesLoopSignal(['type' => 'sdk_app_render']);
+    $signal = makePauseMarkerString(['type' => 'sdk_app_render']);
 
     $agent = makePlanAgent()->fakeResponses([
         makePlanResponse("1. Open app\n2. Record result\n3. Advise client\n4. Send email"),
@@ -832,19 +838,19 @@ test('PlanExecuteLoop deferredSteps contains remaining plan steps after pause', 
     ]);
 });
 
-test('PlanExecuteLoop onPause callback fires with signal and deferred steps', function () {
+test('PlanExecuteLoop onPause callback fires with signal string and deferred steps', function () {
     $capturedSignal = null;
     $capturedDeferred = null;
     $capturedStep = null;
 
-    $signal = makePausesLoopSignal(['type' => 'sdk_app_render']);
+    $signal = makePauseMarkerString(['type' => 'sdk_app_render']);
 
     $agent = makePlanAgent()
         ->fakeResponses([
             makePlanResponse("1. Launch tool\n2. Review output\n3. Finalize"),
             makePlanResponseWithPause('Launching.', $signal),
         ])
-        ->onPause(function (PausesLoop $s, array $deferred, int $step) use (&$capturedSignal, &$capturedDeferred, &$capturedStep) {
+        ->onPause(function (string $s, array $deferred, int $step) use (&$capturedSignal, &$capturedDeferred, &$capturedStep) {
             $capturedSignal = $s;
             $capturedDeferred = $deferred;
             $capturedStep = $step;
@@ -852,7 +858,8 @@ test('PlanExecuteLoop onPause callback fires with signal and deferred steps', fu
 
     $agent->planExecute('Test pause callback');
 
-    expect($capturedSignal)->toBeInstanceOf(PausesLoop::class);
+    expect($capturedSignal)->toBeString();
+    expect($capturedSignal)->toContain(PausesLoop::MARKER_KEY);
     expect($capturedStep)->toBe(1);
     expect($capturedDeferred)->toBe(['Review output', 'Finalize']);
 });
@@ -860,7 +867,7 @@ test('PlanExecuteLoop onPause callback fires with signal and deferred steps', fu
 test('PlanExecuteLoop afterStep callback fires for the pausing step', function () {
     $afterStepFired = false;
 
-    $signal = makePausesLoopSignal(['type' => 'sdk_app_render']);
+    $signal = makePauseMarkerString(['type' => 'sdk_app_render']);
 
     $agent = makePlanAgent()
         ->fakeResponses([
@@ -892,7 +899,7 @@ test('PlanExecuteLoop paused() is false for normally completed result', function
 });
 
 test('PlanExecuteLoop pause on last step has empty deferred steps', function () {
-    $signal = makePausesLoopSignal(['type' => 'sdk_app_render']);
+    $signal = makePauseMarkerString(['type' => 'sdk_app_render']);
 
     $agent = makePlanAgent()->fakeResponses([
         makePlanResponse("1. Only step"),

@@ -9,6 +9,7 @@ use Laragentic\Concerns\HasCallbacks;
 use Laragentic\Contracts\PausesLoop;
 use Laragentic\Exceptions\MaxStepsExceededException;
 use Laragentic\Signals\AskHumanSignal;
+use Laragentic\Signals\PauseSignal;
 use Laravel\Ai\Responses\AgentResponse;
 
 /**
@@ -293,7 +294,7 @@ trait PlanExecuteLoop
                     );
                 }
 
-                if ($toolResult->result instanceof PausesLoop) {
+                if ($toolResult->result instanceof PausesLoop || PauseSignal::isSignal($resultStr)) {
                     $deferredSteps = array_values(array_slice($planDescriptions, $i + 1));
 
                     $executedSteps[] = (new PlanStep(
@@ -302,14 +303,14 @@ trait PlanExecuteLoop
                     ))->withResponse($stepResponse);
 
                     $this->fireCallbacks('afterStep', $stepNumber, $description, $stepResponse, $totalSteps);
-                    $this->fireCallbacks('pause', $toolResult->result, $deferredSteps, $stepNumber, $stepResponse);
+                    $this->fireCallbacks('pause', $resultStr, $deferredSteps, $stepNumber, $stepResponse);
 
                     return new PlanResult(
                         response: $stepResponse,
                         plan: $planDescriptions,
                         steps: $executedSteps,
                         replans: $replanCount,
-                        pauseSignal: $toolResult->result,
+                        pauseSignal: $resultStr,
                         deferredSteps: $deferredSteps,
                     );
                 }
@@ -487,7 +488,7 @@ trait PlanExecuteLoop
                     );
                 }
 
-                if ($toolResult->result instanceof PausesLoop) {
+                if ($toolResult->result instanceof PausesLoop || PauseSignal::isSignal($resultStr)) {
                     $deferredSteps = array_values(array_slice($planDescriptions, $i + 1));
 
                     $executedSteps[] = (new PlanStep(
@@ -496,14 +497,14 @@ trait PlanExecuteLoop
                     ))->withResponse($stepResponse);
 
                     yield from $this->fireStreamCallbacks('afterStep', $stepNumber, $description, $stepResponse, $totalSteps);
-                    yield from $this->fireStreamCallbacks('pause', $toolResult->result, $deferredSteps, $stepNumber, $stepResponse);
+                    yield from $this->fireStreamCallbacks('pause', $resultStr, $deferredSteps, $stepNumber, $stepResponse);
 
                     return new PlanResult(
                         response: $stepResponse,
                         plan: $planDescriptions,
                         steps: $executedSteps,
                         replans: $replanCount,
-                        pauseSignal: $toolResult->result,
+                        pauseSignal: $resultStr,
                         deferredSteps: $deferredSteps,
                     );
                 }

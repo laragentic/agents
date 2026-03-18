@@ -9,6 +9,7 @@ use Laragentic\Concerns\ExecutesLoopTools;
 use Laragentic\Concerns\HasIterationCallbacks;
 use Laragentic\Exceptions\MaxIterationsExceededException;
 use Laragentic\Signals\AskHumanSignal;
+use Laragentic\Signals\PauseSignal;
 use Laravel\Ai\Responses\AgentResponse;
 
 /**
@@ -220,7 +221,7 @@ trait ReActLoop
             // deferred tools when the conversation resumes.
 
             if ($this->detectedPause !== null) {
-                $pause = $this->detectedPause;
+                $pauseStr = (string) $this->detectedPause;
                 $this->detectedPause = null;
 
                 $executedToolNames = array_map(fn ($r) => $r['tool'], $toolCallRecords);
@@ -239,13 +240,13 @@ trait ReActLoop
                 );
 
                 $this->fireCallbacks('iterationEnd', $iteration, $response);
-                $this->fireCallbacks('pause', $pause, $deferredTools, $iteration, $response);
+                $this->fireCallbacks('pause', $pauseStr, $deferredTools, $iteration, $response);
 
                 return new LoopResult(
                     response: $response,
                     iterations: $iteration,
                     steps: $steps,
-                    pauseSignal: $pause,
+                    pauseSignal: $pauseStr,
                     deferredTools: $deferredTools,
                 );
             }
@@ -487,7 +488,7 @@ trait ReActLoop
 
             // ── PAUSE ──────────────────────────────────────────────
             if ($this->detectedPause !== null) {
-                $pause = $this->detectedPause;
+                $pauseStr = (string) $this->detectedPause;
                 $this->detectedPause = null;
 
                 $executedToolNames = array_map(fn ($r) => $r['tool'], $toolCallRecords);
@@ -506,13 +507,13 @@ trait ReActLoop
                 );
 
                 yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
-                yield from $this->fireStreamCallbacks('pause', $pause, $deferredTools, $iteration, $response);
+                yield from $this->fireStreamCallbacks('pause', $pauseStr, $deferredTools, $iteration, $response);
 
                 return new LoopResult(
                     response: $response,
                     iterations: $iteration,
                     steps: $steps,
-                    pauseSignal: $pause,
+                    pauseSignal: $pauseStr,
                     deferredTools: $deferredTools,
                 );
             }
@@ -641,9 +642,7 @@ trait ReActLoop
                 );
             }
 
-            if ($toolResult->result instanceof \Laragentic\Contracts\PausesLoop) {
-                $pauseSignal = $toolResult->result;
-
+            if ($toolResult->result instanceof \Laragentic\Contracts\PausesLoop || PauseSignal::isSignal($resultStr)) {
                 $toolCallRecords[] = [
                     'tool' => $toolResult->name,
                     'arguments' => $response->toolCalls[$i]->arguments ?? [],
@@ -666,13 +665,13 @@ trait ReActLoop
                 );
 
                 $this->fireCallbacks('iterationEnd', $iteration, $response);
-                $this->fireCallbacks('pause', $pauseSignal, $deferredTools, $iteration, $response);
+                $this->fireCallbacks('pause', $resultStr, $deferredTools, $iteration, $response);
 
                 return new LoopResult(
                     response: $response,
                     iterations: $iteration,
                     steps: $steps,
-                    pauseSignal: $pauseSignal,
+                    pauseSignal: $resultStr,
                     deferredTools: $deferredTools,
                 );
             }
@@ -719,9 +718,7 @@ trait ReActLoop
                 );
             }
 
-            if ($toolResult->result instanceof \Laragentic\Contracts\PausesLoop) {
-                $pauseSignal = $toolResult->result;
-
+            if ($toolResult->result instanceof \Laragentic\Contracts\PausesLoop || PauseSignal::isSignal($resultStr)) {
                 $toolCallRecords[] = [
                     'tool' => $toolResult->name,
                     'arguments' => $response->toolCalls[$i]->arguments ?? [],
@@ -744,13 +741,13 @@ trait ReActLoop
                 );
 
                 yield from $this->fireStreamCallbacks('iterationEnd', $iteration, $response);
-                yield from $this->fireStreamCallbacks('pause', $pauseSignal, $deferredTools, $iteration, $response);
+                yield from $this->fireStreamCallbacks('pause', $resultStr, $deferredTools, $iteration, $response);
 
                 return new LoopResult(
                     response: $response,
                     iterations: $iteration,
                     steps: $steps,
-                    pauseSignal: $pauseSignal,
+                    pauseSignal: $resultStr,
                     deferredTools: $deferredTools,
                 );
             }

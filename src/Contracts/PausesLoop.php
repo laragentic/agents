@@ -15,6 +15,20 @@ namespace Laragentic\Contracts;
  * that renders an interactive iframe).
  *
  * Implementations must also implement Stringable so the result
- * can be stored as a tool result string.
+ * can be stored as a tool result string. When stringified, the
+ * JSON output MUST include the MARKER_KEY so that loops using
+ * SDK-resolved tool results (where the object is lost) can detect
+ * the pause via string inspection.
+ *
+ * @see \Laragentic\Signals\PauseSignal::isSignal()
  */
-interface PausesLoop extends \Stringable {}
+interface PausesLoop extends \Stringable
+{
+    /**
+     * JSON key that implementations MUST include in their __toString()
+     * output so loops can detect the pause signal from a string result.
+     *
+     * Example: {"__laragentic_pauses_loop": true, "type": "sdk_app_render", ...}
+     */
+    public const MARKER_KEY = '__laragentic_pauses_loop';
+}

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Laragentic\Loops;
 
-use Laragentic\Contracts\PausesLoop;
 use Laragentic\Signals\AskHumanSignal;
 use Laravel\Ai\Responses\AgentResponse;
 
@@ -29,7 +28,7 @@ class PlanResult
         public readonly int $replans = 0,
         public readonly bool $reachedMaxSteps = false,
         public readonly ?AskHumanSignal $askHumanSignal = null,
-        public readonly ?PausesLoop $pauseSignal = null,
+        public readonly ?string $pauseSignal = null,
         public readonly array $deferredSteps = [],
     ) {}
 

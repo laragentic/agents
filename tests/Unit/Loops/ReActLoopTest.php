@@ -751,7 +751,7 @@ test('loop terminates when a tool returns a PausesLoop result', function () {
     expect($agent->getPromptCallCount())->toBe(1);
 });
 
-test('pauseSignal on result contains the PausesLoop instance', function () {
+test('pauseSignal on result contains the stringified PausesLoop marker', function () {
     $agent = makeAgent()
         ->withTools([new PausingTool])
         ->fakeResponses([
@@ -762,8 +762,9 @@ test('pauseSignal on result contains the PausesLoop instance', function () {
 
     $result = $agent->reactLoop('Calculate stamp duty.');
 
-    expect($result->pauseSignal)->toBeInstanceOf(PausesLoop::class);
-    expect((string) $result->pauseSignal)->toContain('stamp_duty');
+    expect($result->pauseSignal)->toBeString();
+    expect($result->pauseSignal)->toContain('stamp_duty');
+    expect($result->pauseSignal)->toContain(PausesLoop::MARKER_KEY);
 });
 
 test('pausing tool breaks execution before subsequent tools and tracks deferred tools', function () {
@@ -828,7 +829,7 @@ test('loop fires onPause callback instead of loopComplete when paused', function
         ->onLoopComplete(function () use (&$loopCompleted) {
             $loopCompleted = true;
         })
-        ->onPause(function (PausesLoop $signal, array $deferred) use (&$pauseFired, &$pausedDeferredTools) {
+        ->onPause(function (string $signal, array $deferred) use (&$pauseFired, &$pausedDeferredTools) {
             $pauseFired = true;
             $pausedDeferredTools = $deferred;
         });
@@ -906,14 +907,15 @@ test('onPause callback receives deferred tool names', function () {
                 ['name' => 'add_numbers', 'arguments' => ['a' => 1, 'b' => 2]],
             ]),
         ])
-        ->onPause(function (PausesLoop $signal, array $deferred) use (&$capturedSignal, &$capturedDeferred) {
+        ->onPause(function (string $signal, array $deferred) use (&$capturedSignal, &$capturedDeferred) {
             $capturedSignal = $signal;
             $capturedDeferred = $deferred;
         });
 
     $agent->reactLoop('Do both.');
 
-    expect($capturedSignal)->toBeInstanceOf(PausesLoop::class);
+    expect($capturedSignal)->toBeString();
+    expect($capturedSignal)->toContain(PausesLoop::MARKER_KEY);
     expect($capturedDeferred)->toBe(['add_numbers']);
 });
 

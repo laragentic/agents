@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Laragentic\Loops;
 
-use Laragentic\Contracts\PausesLoop;
 use Laragentic\Signals\AskHumanSignal;
 use Laravel\Ai\Responses\AgentResponse;
 
@@ -26,7 +25,7 @@ class LoopResult
         public readonly array $steps = [],
         public readonly bool $reachedMaxIterations = false,
         public readonly ?AskHumanSignal $askHumanSignal = null,
-        public readonly ?PausesLoop $pauseSignal = null,
+        public readonly ?string $pauseSignal = null,
         public readonly array $deferredTools = [],
     ) {}
 
