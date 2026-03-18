@@ -133,3 +133,59 @@ test('fluent api allows method chaining', function () {
     expect($agent)->toBeInstanceOf(TestSkillAgent::class)
         ->and($agent->loadedSkills())->toHaveCount(1);
 });
+
+test('allowedToolIds returns empty when no skills loaded', function () {
+    $agent = new TestSkillAgent;
+
+    expect($agent->allowedToolIds())->toBe([]);
+});
+
+test('allowedToolIds returns empty when loaded skills have no tool restrictions', function () {
+    $agent = new TestSkillAgent;
+    $agent->withSkill('code-review');
+
+    expect($agent->allowedToolIds())->toBe([]);
+});
+
+test('allowedToolIds returns union of tool IDs from restricted skills', function () {
+    $agent = new TestSkillAgent;
+
+    $registry = $agent->skillRegistry();
+    $registry->register(new \Laragentic\Skills\Skill(
+        metadata: new \Laragentic\Skills\SkillMetadata(name: 'skill-a', description: 'A'),
+        instructions: 'Use sdk_llm',
+        path: '',
+        toolIds: ['sdk_llm', 'sdk_ocr'],
+    ));
+    $registry->register(new \Laragentic\Skills\Skill(
+        metadata: new \Laragentic\Skills\SkillMetadata(name: 'skill-b', description: 'B'),
+        instructions: 'Use sdk_ocr and docs',
+        path: '',
+        toolIds: ['sdk_ocr', 'sdk_docs_create'],
+    ));
+
+    $allowed = $agent->allowedToolIds();
+
+    expect($allowed)->toContain('sdk_llm')
+        ->and($allowed)->toContain('sdk_ocr')
+        ->and($allowed)->toContain('sdk_docs_create')
+        ->and($allowed)->toHaveCount(3);
+});
+
+test('skill instructions include preferred tools when tool_ids set', function () {
+    $agent = new TestSkillAgent;
+
+    $registry = $agent->skillRegistry();
+    $registry->register(new \Laragentic\Skills\Skill(
+        metadata: new \Laragentic\Skills\SkillMetadata(name: 'tool-skill', description: 'T'),
+        instructions: 'Do stuff',
+        path: '',
+        toolIds: ['sdk_llm', 'sdk_ocr'],
+    ));
+
+    $instructions = $agent->instructions();
+
+    expect($instructions)->toContain('Preferred tools for this skill')
+        ->and($instructions)->toContain('`sdk_llm`')
+        ->and($instructions)->toContain('`sdk_ocr`');
+});

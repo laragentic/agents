@@ -108,9 +108,44 @@ test('converts skill to array', function () {
     expect($array)->toHaveKey('name', 'test-skill')
         ->and($array)->toHaveKey('description', 'Test')
         ->and($array)->toHaveKey('tags', ['test'])
+        ->and($array)->toHaveKey('tool_ids', [])
         ->and($array)->toHaveKey('version', '1.0.0')
         ->and($array)->toHaveKey('author', 'Author')
         ->and($array)->toHaveKey('has_scripts', false)
         ->and($array)->toHaveKey('has_references', false)
         ->and($array)->toHaveKey('has_assets', false);
+});
+
+test('tracks tool restrictions', function () {
+    $metadata = new SkillMetadata(name: 'tool-skill', description: 'Test');
+
+    $withTools = new Skill(
+        metadata: $metadata,
+        instructions: 'Use these tools',
+        path: '/path',
+        toolIds: ['sdk_llm', 'sdk_ocr'],
+    );
+
+    $withoutTools = new Skill(
+        metadata: $metadata,
+        instructions: 'General skill',
+        path: '/path',
+    );
+
+    expect($withTools->hasToolRestrictions())->toBeTrue()
+        ->and($withTools->toolIds)->toBe(['sdk_llm', 'sdk_ocr'])
+        ->and($withoutTools->hasToolRestrictions())->toBeFalse()
+        ->and($withoutTools->toolIds)->toBe([]);
+});
+
+test('toArray includes tool_ids', function () {
+    $metadata = new SkillMetadata(name: 'tool-skill', description: 'Test');
+    $skill = new Skill(
+        metadata: $metadata,
+        instructions: 'Instructions',
+        path: '/path',
+        toolIds: ['sdk_llm', 'sdk_docs_create'],
+    );
+
+    expect($skill->toArray())->toHaveKey('tool_ids', ['sdk_llm', 'sdk_docs_create']);
 });

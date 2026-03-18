@@ -19,6 +19,7 @@ final class Skill
      * @param  ?string  $scriptsPath  Absolute path to scripts/ subdirectory if it exists
      * @param  ?string  $referencesPath  Absolute path to references/ subdirectory if it exists
      * @param  ?string  $assetsPath  Absolute path to assets/ subdirectory if it exists
+     * @param  array<string>  $toolIds  Tool identifiers this skill is allowed to use
      */
     public function __construct(
         public readonly SkillMetadata $metadata,
@@ -27,6 +28,7 @@ final class Skill
         public readonly ?string $scriptsPath = null,
         public readonly ?string $referencesPath = null,
         public readonly ?string $assetsPath = null,
+        public readonly array $toolIds = [],
         private float $relevanceScore = 0.0,
     ) {}
 
@@ -99,6 +101,14 @@ final class Skill
     }
 
     /**
+     * Whether this skill restricts which tools the agent may use.
+     */
+    public function hasToolRestrictions(): bool
+    {
+        return ! empty($this->toolIds);
+    }
+
+    /**
      * Get a summary of the skill (metadata only, no instructions).
      *
      * Used for progressive disclosure - show skill index without full content.
@@ -125,6 +135,7 @@ final class Skill
             'name' => $this->name(),
             'description' => $this->description(),
             'tags' => $this->tags(),
+            'tool_ids' => $this->toolIds,
             'version' => $this->metadata->version,
             'author' => $this->metadata->author,
             'has_scripts' => $this->hasScripts(),

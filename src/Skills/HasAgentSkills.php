@@ -125,6 +125,35 @@ trait HasAgentSkills
     }
 
     /**
+     * Collect the union of tool IDs from all loaded skills.
+     *
+     * Returns an empty array when no skills are loaded or when
+     * none of the loaded skills specify tool restrictions.
+     *
+     * @return array<string>
+     */
+    public function allowedToolIds(): array
+    {
+        $skills = $this->loadedSkills();
+
+        if (empty($skills)) {
+            return [];
+        }
+
+        $hasRestrictions = false;
+        $ids = [];
+
+        foreach ($skills as $skill) {
+            if ($skill->hasToolRestrictions()) {
+                $hasRestrictions = true;
+                $ids = array_merge($ids, $skill->toolIds);
+            }
+        }
+
+        return $hasRestrictions ? array_values(array_unique($ids)) : [];
+    }
+
+    /**
      * Get the skill registry instance.
      */
     public function skillRegistry(): SkillRegistry
@@ -218,11 +247,16 @@ trait HasAgentSkills
     protected function buildPromptWithLoadedSkills(string $baseInstructions, array $skills): string
     {
         $prompt = $baseInstructions . "\n\n# Active Skills\n\n";
-        $prompt .= "The following skills are loaded and ready to use:\n\n";
+        $prompt .= "The following skills are loaded and ready to use. Follow the skill instructions precisely.\n\n";
 
         foreach ($skills as $skill) {
             $prompt .= "## Skill: {$skill->name()}\n\n";
             $prompt .= $skill->instructions . "\n\n";
+
+            if ($skill->hasToolRestrictions()) {
+                $toolList = implode(', ', array_map(fn ($id) => "`{$id}`", $skill->toolIds));
+                $prompt .= "**Preferred tools for this skill**: {$toolList}\n";
+            }
 
             if ($skill->hasScripts()) {
                 $prompt .= "**Scripts available**: {$skill->scriptsPath}\n";
