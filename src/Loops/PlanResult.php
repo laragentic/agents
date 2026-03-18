@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Laragentic\Loops;
 
+use Laragentic\Contracts\PausesLoop;
 use Laragentic\Signals\AskHumanSignal;
 use Laravel\Ai\Responses\AgentResponse;
 
@@ -17,8 +18,9 @@ use Laravel\Ai\Responses\AgentResponse;
 class PlanResult
 {
     /**
-     * @param  list<string>     $plan   The original plan step descriptions
-     * @param  list<PlanStep>   $steps  Executed step objects with responses
+     * @param  list<string>     $plan           The original plan step descriptions
+     * @param  list<PlanStep>   $steps          Executed step objects with responses
+     * @param  list<string>     $deferredSteps  Plan step descriptions not yet executed due to pause
      */
     public function __construct(
         public readonly AgentResponse $response,
@@ -27,6 +29,8 @@ class PlanResult
         public readonly int $replans = 0,
         public readonly bool $reachedMaxSteps = false,
         public readonly ?AskHumanSignal $askHumanSignal = null,
+        public readonly ?PausesLoop $pauseSignal = null,
+        public readonly array $deferredSteps = [],
     ) {}
 
     /**
@@ -48,12 +52,14 @@ class PlanResult
     /**
      * Determine if the loop completed naturally (all steps executed + synthesized).
      *
-     * Returns false when the loop was interrupted by an AskHumanSignal
-     * or when max steps were reached.
+     * Returns false when the loop was interrupted by an AskHumanSignal,
+     * PausesLoop, or when max steps were reached.
      */
     public function completed(): bool
     {
-        return ! $this->reachedMaxSteps && $this->askHumanSignal === null;
+        return ! $this->reachedMaxSteps
+            && $this->askHumanSignal === null
+            && $this->pauseSignal === null;
     }
 
     /**
@@ -62,6 +68,14 @@ class PlanResult
     public function askedHuman(): bool
     {
         return $this->askHumanSignal !== null;
+    }
+
+    /**
+     * Determine if the loop was paused by a PausesLoop tool result.
+     */
+    public function paused(): bool
+    {
+        return $this->pauseSignal !== null;
     }
 
     /**

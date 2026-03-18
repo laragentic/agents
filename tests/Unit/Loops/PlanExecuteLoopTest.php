@@ -8,6 +8,7 @@ use Laravel\Ai\Responses\Data\Meta;
 use Laravel\Ai\Responses\Data\ToolCall;
 use Laravel\Ai\Responses\Data\ToolResult;
 use Laravel\Ai\Responses\Data\Usage;
+use Laragentic\Contracts\PausesLoop;
 use Laragentic\Exceptions\MaxStepsExceededException;
 use Laragentic\Loops\PlanResult;
 use Laragentic\Loops\PlanStep;
@@ -739,4 +740,167 @@ test('PlanExecuteLoop askedHuman() is false for a normally completed result', fu
     expect($result->askedHuman())->toBeFalse();
     expect($result->askHumanSignal)->toBeNull();
     expect($result->completed())->toBeTrue();
+});
+
+// ─── PausesLoop ──────────────────────────────────────────────────────
+
+function makePausesLoopSignal(array $payload = []): PausesLoop
+{
+    return new class($payload) implements PausesLoop
+    {
+        public function __construct(private readonly array $payload) {}
+
+        public function __toString(): string
+        {
+            return json_encode($this->payload, JSON_THROW_ON_ERROR);
+        }
+    };
+}
+
+function makePlanResponseWithPause(string $text, PausesLoop $signal): AgentResponse
+{
+    $response = makePlanResponse($text);
+
+    $toolCall = new ToolCall(
+        id: 'tc-pause-' . uniqid(),
+        name: 'sdk_app_calculator',
+        arguments: ['state' => 'NSW'],
+    );
+
+    $toolResult = new ToolResult(
+        id: 'tr-pause-' . uniqid(),
+        name: 'sdk_app_calculator',
+        arguments: ['state' => 'NSW'],
+        result: $signal,
+    );
+
+    $response->toolCalls = new Collection([$toolCall]);
+    $response->toolResults = new Collection([$toolResult]);
+
+    return $response;
+}
+
+test('PlanExecuteLoop terminates when a step response contains a PausesLoop tool result', function () {
+    $signal = makePausesLoopSignal(['type' => 'sdk_app_render', 'app_name' => 'Calculator']);
+
+    $agent = makePlanAgent()->fakeResponses([
+        makePlanResponse("1. Open calculator\n2. Record result\n3. Advise client"),
+        makePlanResponseWithPause('Opening the calculator app.', $signal),
+        makePlanResponse('Should not be reached.'),
+        makePlanResponse('Should not be reached either.'),
+        makePlanResponse('Should not synthesize.'),
+    ]);
+
+    $result = $agent->planExecute('Calculate stamp duty for NSW');
+
+    expect($result)->toBeInstanceOf(PlanResult::class);
+    expect($result->paused())->toBeTrue();
+    expect($result->completed())->toBeFalse();
+    expect($result->reachedMaxSteps)->toBeFalse();
+    expect($result->askedHuman())->toBeFalse();
+    expect($agent->getPromptCallCount())->toBe(2);
+});
+
+test('PlanExecuteLoop pauseSignal contains the PausesLoop object', function () {
+    $signal = makePausesLoopSignal(['type' => 'sdk_app_render', 'tool_name' => 'stamp_duty']);
+
+    $agent = makePlanAgent()->fakeResponses([
+        makePlanResponse("1. Launch tool\n2. Use result"),
+        makePlanResponseWithPause('Launching.', $signal),
+    ]);
+
+    $result = $agent->planExecute('Test');
+
+    expect($result->pauseSignal)->toBeInstanceOf(PausesLoop::class);
+    expect((string) $result->pauseSignal)->toContain('stamp_duty');
+});
+
+test('PlanExecuteLoop deferredSteps contains remaining plan steps after pause', function () {
+    $signal = makePausesLoopSignal(['type' => 'sdk_app_render']);
+
+    $agent = makePlanAgent()->fakeResponses([
+        makePlanResponse("1. Open app\n2. Record result\n3. Advise client\n4. Send email"),
+        makePlanResponseWithPause('Opening.', $signal),
+    ]);
+
+    $result = $agent->planExecute('Multi-step task');
+
+    expect($result->deferredSteps)->toBe([
+        'Record result',
+        'Advise client',
+        'Send email',
+    ]);
+});
+
+test('PlanExecuteLoop onPause callback fires with signal and deferred steps', function () {
+    $capturedSignal = null;
+    $capturedDeferred = null;
+    $capturedStep = null;
+
+    $signal = makePausesLoopSignal(['type' => 'sdk_app_render']);
+
+    $agent = makePlanAgent()
+        ->fakeResponses([
+            makePlanResponse("1. Launch tool\n2. Review output\n3. Finalize"),
+            makePlanResponseWithPause('Launching.', $signal),
+        ])
+        ->onPause(function (PausesLoop $s, array $deferred, int $step) use (&$capturedSignal, &$capturedDeferred, &$capturedStep) {
+            $capturedSignal = $s;
+            $capturedDeferred = $deferred;
+            $capturedStep = $step;
+        });
+
+    $agent->planExecute('Test pause callback');
+
+    expect($capturedSignal)->toBeInstanceOf(PausesLoop::class);
+    expect($capturedStep)->toBe(1);
+    expect($capturedDeferred)->toBe(['Review output', 'Finalize']);
+});
+
+test('PlanExecuteLoop afterStep callback fires for the pausing step', function () {
+    $afterStepFired = false;
+
+    $signal = makePausesLoopSignal(['type' => 'sdk_app_render']);
+
+    $agent = makePlanAgent()
+        ->fakeResponses([
+            makePlanResponse("1. Open calculator"),
+            makePlanResponseWithPause('Opening.', $signal),
+        ])
+        ->onAfterStep(function () use (&$afterStepFired) {
+            $afterStepFired = true;
+        });
+
+    $agent->planExecute('Test');
+
+    expect($afterStepFired)->toBeTrue();
+});
+
+test('PlanExecuteLoop paused() is false for normally completed result', function () {
+    $agent = makePlanAgent()->fakeResponses([
+        makePlanResponse("1. Do the work"),
+        makePlanResponse('Work done.'),
+        makePlanResponse('Final answer.'),
+    ]);
+
+    $result = $agent->planExecute('Simple task');
+
+    expect($result->paused())->toBeFalse();
+    expect($result->pauseSignal)->toBeNull();
+    expect($result->deferredSteps)->toBe([]);
+    expect($result->completed())->toBeTrue();
+});
+
+test('PlanExecuteLoop pause on last step has empty deferred steps', function () {
+    $signal = makePausesLoopSignal(['type' => 'sdk_app_render']);
+
+    $agent = makePlanAgent()->fakeResponses([
+        makePlanResponse("1. Only step"),
+        makePlanResponseWithPause('Pausing on last step.', $signal),
+    ]);
+
+    $result = $agent->planExecute('Test');
+
+    expect($result->paused())->toBeTrue();
+    expect($result->deferredSteps)->toBe([]);
 });

@@ -6,6 +6,7 @@ namespace Laragentic\Loops;
 
 use Closure;
 use Laragentic\Concerns\HasCallbacks;
+use Laragentic\Contracts\PausesLoop;
 use Laragentic\Exceptions\MaxStepsExceededException;
 use Laragentic\Signals\AskHumanSignal;
 use Laravel\Ai\Responses\AgentResponse;
@@ -271,9 +272,9 @@ trait PlanExecuteLoop
             $stepsExecuted++;
             $lastResponse = $stepResponse;
 
-            // ── ASK HUMAN ───────────────────────────────────────────
+            // ── ASK HUMAN / PAUSE ────────────────────────────────────
             // PlanExecuteLoop uses the SDK to resolve tool calls within
-            // prompt(). Scan toolResults for the AskHumanSignal JSON marker.
+            // prompt(). Scan toolResults for AskHumanSignal or PausesLoop.
 
             foreach ($stepResponse->toolResults as $toolResult) {
                 $resultStr = (string) $toolResult->result;
@@ -289,6 +290,27 @@ trait PlanExecuteLoop
                         steps: $executedSteps,
                         replans: $replanCount,
                         askHumanSignal: $signal,
+                    );
+                }
+
+                if ($toolResult->result instanceof PausesLoop) {
+                    $deferredSteps = array_values(array_slice($planDescriptions, $i + 1));
+
+                    $executedSteps[] = (new PlanStep(
+                        number: $stepNumber,
+                        description: $description,
+                    ))->withResponse($stepResponse);
+
+                    $this->fireCallbacks('afterStep', $stepNumber, $description, $stepResponse, $totalSteps);
+                    $this->fireCallbacks('pause', $toolResult->result, $deferredSteps, $stepNumber, $stepResponse);
+
+                    return new PlanResult(
+                        response: $stepResponse,
+                        plan: $planDescriptions,
+                        steps: $executedSteps,
+                        replans: $replanCount,
+                        pauseSignal: $toolResult->result,
+                        deferredSteps: $deferredSteps,
                     );
                 }
             }
@@ -447,7 +469,7 @@ trait PlanExecuteLoop
             $stepsExecuted++;
             $lastResponse = $stepResponse;
 
-            // ── ASK HUMAN ───────────────────────────────────────────
+            // ── ASK HUMAN / PAUSE ────────────────────────────────────
             foreach ($stepResponse->toolResults as $toolResult) {
                 $resultStr = (string) $toolResult->result;
 
@@ -462,6 +484,27 @@ trait PlanExecuteLoop
                         steps: $executedSteps,
                         replans: $replanCount,
                         askHumanSignal: $signal,
+                    );
+                }
+
+                if ($toolResult->result instanceof PausesLoop) {
+                    $deferredSteps = array_values(array_slice($planDescriptions, $i + 1));
+
+                    $executedSteps[] = (new PlanStep(
+                        number: $stepNumber,
+                        description: $description,
+                    ))->withResponse($stepResponse);
+
+                    yield from $this->fireStreamCallbacks('afterStep', $stepNumber, $description, $stepResponse, $totalSteps);
+                    yield from $this->fireStreamCallbacks('pause', $toolResult->result, $deferredSteps, $stepNumber, $stepResponse);
+
+                    return new PlanResult(
+                        response: $stepResponse,
+                        plan: $planDescriptions,
+                        steps: $executedSteps,
+                        replans: $replanCount,
+                        pauseSignal: $toolResult->result,
+                        deferredSteps: $deferredSteps,
                     );
                 }
             }
