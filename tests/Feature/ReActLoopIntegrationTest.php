@@ -24,10 +24,12 @@ use Laragentic\Tests\Fixtures\MathAgent;
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
-function skipWithoutApiKey(string $key): void
-{
-    if (empty(env($key))) {
-        test()->markTestSkipped("Skipping: {$key} not set in .env");
+if (! function_exists('skipWithoutApiKey')) {
+    function skipWithoutApiKey(string $key): void
+    {
+        if (empty(env($key))) {
+            test()->markTestSkipped("Skipping: {$key} not set in .env");
+        }
     }
 }
 

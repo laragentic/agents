@@ -28,6 +28,10 @@ class LaragenticServiceProvider extends ServiceProvider
             $this->publishes([
                 __DIR__ . '/../config/agentic.php' => config_path('agentic.php'),
             ], 'agentic-config');
+
+            $this->publishes([
+                __DIR__ . '/../database/migrations' => database_path('migrations'),
+            ], 'agentic-migrations');
         }
     }
 }
